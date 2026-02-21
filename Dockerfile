@@ -15,4 +15,5 @@ FROM python:3.11-slim
 
   EXPOSE 8000
 
-  CMD ["uvicorn", "bot9b:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
+  # Новая модульная точка входа (ТЗ Б.7). Для старого бота: bot9b:app
+  CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
