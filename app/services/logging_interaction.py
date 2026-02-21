@@ -2,7 +2,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import asyncpg
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 async def log_interaction(
-    pool: asyncpg.Pool,
+    pool: Optional[asyncpg.Pool],
     chat_id: str,
     message: str,
     response: str,
@@ -18,6 +18,9 @@ async def log_interaction(
     tokens: int,
     escalation: bool,
 ) -> None:
+    if pool is None:
+        logger.warning("DB pool unavailable, skipping interaction log")
+        return
     try:
         async with pool.acquire() as conn:
             await conn.execute(
