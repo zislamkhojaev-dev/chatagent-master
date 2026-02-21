@@ -138,7 +138,7 @@ async def index_pdf_to_qdrant(
     indices, embs, chunks = [x[0] for x in valid], [x[1] for x in valid], [x[2] for x in valid]
     collection_name = f"{settings.QDRANT_COLLECTION_PREFIX}_{int(time.time())}"
     create_collection(client, collection_name, vector_size=1536)
-    ids = [str(i) for i in range(len(chunks))]
+    ids = list(range(len(chunks)))  # Qdrant принимает только int (uint64) или UUID
     payloads = [{"text": c, "id": i} for i, c in enumerate(chunks)]
     upsert_points(client, collection_name, ids, embs, payloads)
     # Переключить alias: удалить старый, создать новый

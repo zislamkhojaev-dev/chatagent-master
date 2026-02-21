@@ -60,7 +60,7 @@ async def get_embedding_with_semaphore(
 ) -> list[float] | None:
     """Эмбеддинг с семафором (для батча при индексации)."""
     try:
-        async with _get_semaphore().acquire():
+        async with _get_semaphore():
             return await get_embedding(chunk, redis_client)
     except Exception as e:
         logger.error("Failed to get embedding for chunk %s...: %s", chunk[:50], e)

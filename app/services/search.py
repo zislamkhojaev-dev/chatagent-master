@@ -31,24 +31,18 @@ def _hybrid_search_sync(
     )
     bm25_hits = search_bm25(bm25_index, chunks, query_text, top_k=bm25_top_k)
 
-    # RRF: score = sum 1/(k + rank)
-    rrf_scores: dict[Any, float] = {}
+    # RRF: score = sum 1/(k + rank). Ключи — int (id чанка), т.к. в Qdrant точки с id 0, 1, 2, ...
+    rrf_scores: dict[int, float] = {}
     for rank, (uid, _, _) in enumerate(vector_hits):
         rrf_scores[uid] = rrf_scores.get(uid, 0) + 1.0 / (RRF_K + rank)
     for rank, (idx, _) in enumerate(bm25_hits):
-        # id в Qdrant — строка "0", "1", ...
-        uid = str(idx)
-        rrf_scores[uid] = rrf_scores.get(uid, 0) + 1.0 / (RRF_K + rank)
+        rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (RRF_K + rank)
 
     sorted_ids = sorted(rrf_scores.keys(), key=lambda x: -rrf_scores[x])[:final_top_k]
     result = []
-    for uid in sorted_ids:
-        try:
-            idx = int(uid)
-            if 0 <= idx < len(chunks):
-                result.append(chunks[idx])
-        except ValueError:
-            continue
+    for idx in sorted_ids:
+        if 0 <= idx < len(chunks):
+            result.append(chunks[idx])
     return result
 
 

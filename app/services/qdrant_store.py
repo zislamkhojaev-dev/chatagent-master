@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
-from qdrant_client.http.models import PointStruct
+from qdrant_client.models import PointStruct
 
 from app.core.config import settings
 
@@ -57,7 +57,7 @@ def create_collection(
 def upsert_points(
     client: QdrantClient,
     collection_name: str,
-    ids: List[str],
+    ids: List[int],
     vectors: List[List[float]],
     payloads: List[dict],
 ) -> None:
