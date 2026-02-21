@@ -1,0 +1,27 @@
+# Python
+pycache/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Docker
+*.log
+
+# Env
+.env
+
+# Данные
+pgdata/
+grafana-data/
+
+# Временные файлы
+*.tmp
+*.bak
+*.swp
+
+# PDF база знаний
+KB.pdf
