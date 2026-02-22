@@ -116,7 +116,7 @@ async def process_message(
                 await log_interaction(
                     req.app.state.db_pool, chat_id, anonymized_message, high_load_response,
                     {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Высокая нагрузка"},
-                    0, False,
+                    0, False, language,
                 )
                 return MessageResponse(
                     status="high_load",
@@ -135,7 +135,7 @@ async def process_message(
             await log_interaction(
                 req.app.state.db_pool, chat_id, anonymized_message, escalation_response,
                 {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Передача оператору"},
-                0, True,
+                0, True, language,
             )
             start_time_str = await redis_utils.safe_redis_get(
                 redis_client, f"chat:{chat_id}:start_time"
@@ -184,7 +184,7 @@ async def process_message(
         )
         await log_interaction(
             req.app.state.db_pool, chat_id, anonymized_message, ai_response,
-            classification, tokens, False,
+            classification, tokens, False, language,
         )
         schedule_context_update(redis_client, chat_id, anonymized_message, ai_response)
         return MessageResponse(
@@ -224,7 +224,7 @@ async def escalate(
             await log_interaction(
                 req.app.state.db_pool, chat_id, "Manual escalation", high_load_response,
                 {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Высокая нагрузка"},
-                0, False,
+                0, False, last_language,
             )
             return EscalateResponse(
                 status="high_load",
@@ -241,7 +241,7 @@ async def escalate(
         await log_interaction(
             req.app.state.db_pool, chat_id, "Manual escalation", escalation_response,
             {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Передача оператору"},
-            0, True,
+            0, True, last_language,
         )
         seen = await redis_utils.safe_redis_get(redis_client, f"chat:{chat_id}:seen")
         if seen is None:

@@ -51,8 +51,12 @@ async def lifespan(app: FastAPI):
                     classification JSONB,
                     tokens INT,
                     escalation BOOLEAN,
+                    language VARCHAR(5),
                     timestamp TIMESTAMP
                 )
+            """)
+            await conn.execute("""
+                ALTER TABLE interactions ADD COLUMN IF NOT EXISTS language VARCHAR(5)
             """)
         logger.info("Database pool and interactions table ready")
     except Exception as e:

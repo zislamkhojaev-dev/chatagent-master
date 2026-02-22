@@ -17,6 +17,7 @@ async def log_interaction(
     classification: Dict[str, str],
     tokens: int,
     escalation: bool,
+    language: str = "uz",
 ) -> None:
     if pool is None:
         logger.warning("DB pool unavailable, skipping interaction log")
@@ -25,8 +26,8 @@ async def log_interaction(
         async with pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO interactions (chat_id, message, response, classification, tokens, escalation, timestamp)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO interactions (chat_id, message, response, classification, tokens, escalation, language, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 """,
                 chat_id,
                 message,
@@ -34,6 +35,7 @@ async def log_interaction(
                 json.dumps(classification),
                 tokens,
                 escalation,
+                language,
                 datetime.now(),
             )
     except Exception as e:
