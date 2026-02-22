@@ -99,8 +99,14 @@ def semantic_chunking(
             if i == 0:
                 overlapped.append(c)
             else:
-                tail = chunks[i - 1][-overlap:] if len(chunks[i - 1]) >= overlap else chunks[i - 1]
-                overlapped.append(tail.strip() + "\n\n" + c)
+                prev = chunks[i - 1]
+                # Обрезаем по границе слова: находим первый пробел после точки среза
+                start = max(0, len(prev) - overlap)
+                if start > 0:
+                    space_idx = prev.find(" ", start)
+                    start = space_idx + 1 if space_idx != -1 else start
+                tail = prev[start:].strip()
+                overlapped.append(tail + "\n\n" + c if tail else c)
         return overlapped
     return chunks
 

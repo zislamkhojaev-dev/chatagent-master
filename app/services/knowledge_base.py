@@ -107,12 +107,12 @@ async def index_pdf_to_qdrant(
     Индексирует PDF в Qdrant: чанки → эмбеддинги → коллекция kb_v1_{timestamp} → alias kb_current.
     Сохраняет чанки в knowledge_base.json. Возвращает (chunks, collection_name).
     """
-    from qdrant_client.http import models as qdrant_models
     from app.services.qdrant_store import (
         get_qdrant_client,
         create_collection,
         upsert_points,
         set_alias,
+        delete_alias,
         get_collection_by_alias,
     )
 
@@ -141,17 +141,11 @@ async def index_pdf_to_qdrant(
     ids = list(range(len(chunks)))  # Qdrant принимает только int (uint64) или UUID
     payloads = [{"text": c, "id": i} for i, c in enumerate(chunks)]
     upsert_points(client, collection_name, ids, embs, payloads)
-    # Переключить alias: удалить старый, создать новый
+    # Переключить alias: удалить старый, создать новый (всё через REST, без моделей qdrant-client)
     try:
         old = get_collection_by_alias(client, settings.QDRANT_ALIAS)
         if old:
-            client.update_collection_aliases(
-                change_aliases=[
-                    qdrant_models.AliasOperations(
-                        delete_alias=qdrant_models.DeleteAlias(alias_name=settings.QDRANT_ALIAS)
-                    )
-                ]
-            )
+            delete_alias(settings.QDRANT_ALIAS)
     except Exception as e:
         logger.debug("No previous alias or error: %s", e)
     set_alias(client, collection_name, settings.QDRANT_ALIAS)

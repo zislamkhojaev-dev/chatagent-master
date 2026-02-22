@@ -3,15 +3,18 @@ import logging
 import time
 from typing import Any, List, Optional
 
+import httpx
 from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
-from qdrant_client.models import PointStruct
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 VECTOR_SIZE = 1536  # OpenAI text-embedding-ada-002
+
+
+def _qdrant_base() -> str:
+    return f"http://{settings.QDRANT_HOST}:{settings.QDRANT_PORT}"
 
 
 def get_qdrant_client() -> Optional[QdrantClient]:
@@ -40,55 +43,84 @@ def qdrant_available(client: Optional[QdrantClient]) -> bool:
 
 
 def create_collection(
-    client: QdrantClient,
+    client: Optional[QdrantClient],
     collection_name: str,
     vector_size: int = VECTOR_SIZE,
 ) -> None:
-    client.recreate_collection(
-        collection_name=collection_name,
-        vectors_config=qdrant_models.VectorParams(
-            size=vector_size,
-            distance=qdrant_models.Distance.COSINE,
-        ),
-    )
+    """Создание коллекции через REST API (обход Union в qdrant-client)."""
+    base = _qdrant_base()
+    url = f"{base}/collections/{collection_name}"
+    body = {"vectors": {"size": vector_size, "distance": "Cosine"}}
+    with httpx.Client(timeout=30.0) as http:
+        # Удалить старую коллекцию с таким именем, если есть
+        r = http.delete(url)
+        if r.status_code not in (200, 404):
+            r.raise_for_status()
+        resp = http.put(url, json=body)
+        resp.raise_for_status()
     logger.info("Created Qdrant collection %s", collection_name)
 
 
 def upsert_points(
-    client: QdrantClient,
+    client: Optional[QdrantClient],
     collection_name: str,
     ids: List[int],
     vectors: List[List[float]],
     payloads: List[dict],
 ) -> None:
-    points = [
-        PointStruct(id=uid, vector=vec, payload=payload)
-        for uid, vec, payload in zip(ids, vectors, payloads)
-    ]
-    client.upsert(collection_name=collection_name, points=points, wait=True)
-    logger.info("Upserted %s points to %s", len(points), collection_name)
-
-
-def set_alias(client: QdrantClient, collection_name: str, alias: str) -> None:
-    client.update_collection_aliases(
-        change_aliases=[
-            qdrant_models.AliasOperations(
-                create_alias=qdrant_models.CreateAlias(
-                    collection_name=collection_name,
-                    alias_name=alias,
-                )
-            )
+    """Загрузка точек через REST API (обход ошибки «Cannot instantiate typing.Union» в qdrant-client)."""
+    base = _qdrant_base()
+    url = f"{base}/collections/{collection_name}/points?wait=true"
+    body = {
+        "points": [
+            {"id": uid, "vector": vec, "payload": payload}
+            for uid, vec, payload in zip(ids, vectors, payloads)
         ]
-    )
+    }
+    with httpx.Client(timeout=60.0) as http:
+        resp = http.put(url, json=body)
+        resp.raise_for_status()
+    logger.info("Upserted %s points to %s", len(ids), collection_name)
+
+
+def set_alias(client: Optional[QdrantClient], collection_name: str, alias: str) -> None:
+    """Создание алиаса через REST API (обход Union в qdrant-client)."""
+    base = _qdrant_base()
+    url = f"{base}/collections/aliases"
+    body = {
+        "actions": [
+            {"create_alias": {"collection_name": collection_name, "alias_name": alias}}
+        ]
+    }
+    with httpx.Client(timeout=30.0) as http:
+        resp = http.post(url, json=body)
+        resp.raise_for_status()
     logger.info("Set alias %s -> %s", alias, collection_name)
 
 
-def get_collection_by_alias(client: QdrantClient, alias: str) -> Optional[str]:
+def delete_alias(alias: str) -> None:
+    """Удаление алиаса через REST API (обход Union в qdrant-client)."""
+    base = _qdrant_base()
+    url = f"{base}/collections/aliases"
+    body = {"actions": [{"delete_alias": {"alias_name": alias}}]}
+    with httpx.Client(timeout=30.0) as http:
+        resp = http.post(url, json=body)
+        resp.raise_for_status()
+    logger.info("Deleted alias %s", alias)
+
+
+def get_collection_by_alias(client: Optional[QdrantClient], alias: str) -> Optional[str]:
+    """Получение имени коллекции по алиасу через REST API."""
+    base = _qdrant_base()
+    url = f"{base}/aliases"
     try:
-        aliases = client.get_aliases()
-        for a in aliases.aliases:
-            if a.alias_name == alias:
-                return a.collection_name
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        for a in data.get("result", {}).get("aliases", []):
+            if a.get("alias_name") == alias:
+                return a.get("collection_name")
         return None
     except Exception as e:
         logger.warning("Failed to get alias %s: %s", alias, e)
@@ -101,13 +133,13 @@ def search(
     query_vector: List[float],
     limit: int = 20,
 ) -> List[tuple[Any, float, dict]]:
-    """Возвращает список (id, score, payload)."""
-    results = client.search(
+    """Возвращает список (id, score, payload). Использует query_points (qdrant-client >= 1.7)."""
+    response = client.query_points(
         collection_name=collection_name,
-        query_vector=query_vector,
+        query=query_vector,
         limit=limit,
     )
-    return [(r.id, r.score, r.payload or {}) for r in results]
+    return [(r.id, r.score, r.payload or {}) for r in response.points]
 
 
 def scroll_collection(
