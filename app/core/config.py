@@ -19,6 +19,12 @@ class Settings:
 
     # OpenAI
     OPENAI_API_KEY: str = _get_required("OPENAI_API_KEY")
+    OPENAI_EMBEDDING_MODEL: str = os.getenv(
+        "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+    )
+    OPENAI_EMBEDDING_DIMENSIONS: int = int(
+        os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536")
+    )
 
     # DB
     DB_HOST: str = os.getenv("DB_HOST", "localhost")

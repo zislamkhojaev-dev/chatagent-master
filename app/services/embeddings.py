@@ -35,22 +35,33 @@ def _get_semaphore() -> asyncio.Semaphore:
     wait=wait_exponential(multiplier=1, min=settings.MIN_WAIT, max=settings.MAX_WAIT),
     retry=retry_if_exception_type((APIError, RateLimitError, httpx.TimeoutException)),
 )
+def _embedding_cache_key(text: str) -> str:
+    """Префикс по модели/размерности — не смешивать с кэшем от ada-002."""
+    return (
+        f"embedding:{settings.OPENAI_EMBEDDING_MODEL}:"
+        f"{settings.OPENAI_EMBEDDING_DIMENSIONS}:{text}"
+    )
+
+
 async def get_embedding(text: str, redis_client: Redis) -> list[float]:
-    """Эмбеддинг текста (OpenAI text-embedding-ada-002), с кэшем в Redis."""
-    cached = await redis_utils.safe_redis_get(redis_client, f"embedding:{text}")
+    """Эмбеддинг текста (OpenAI, по умолчанию text-embedding-3-small, 1536), кэш Redis."""
+    cache_key = _embedding_cache_key(text)
+    cached = await redis_utils.safe_redis_get(redis_client, cache_key)
     if cached:
         logger.info("Using cached embedding for: %s...", text[:50])
         return json.loads(cached)
     logger.info("Fetching new embedding for: %s...", text[:50])
     client = get_openai_client()
     response = await client.embeddings.create(
-        model="text-embedding-ada-002", input=text
+        model=settings.OPENAI_EMBEDDING_MODEL,
+        input=text,
+        dimensions=settings.OPENAI_EMBEDDING_DIMENSIONS,
     )
     if not response.data or not response.data[0].embedding:
         raise APIError("No embedding data in OpenAI response")
     embedding = response.data[0].embedding
     await redis_utils.safe_redis_set(
-        redis_client, f"embedding:{text}", json.dumps(embedding), ex=3600
+        redis_client, cache_key, json.dumps(embedding), ex=3600
     )
     return embedding
 

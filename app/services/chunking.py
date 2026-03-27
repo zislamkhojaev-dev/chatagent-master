@@ -58,6 +58,36 @@ def smart_sentence_split(text: str) -> List[str]:
     return [s.strip() for s in final_sentences if s.strip()]
 
 
+def sentence_overlap_suffix(prev: str, max_chars: int) -> str:
+    """
+    Суффикс предыдущего чанка для overlap: только законченные предложения,
+    с конца, пока суммарная длина не превышает max_chars. Последнее предложение
+    всегда целиком (без обрезки середины фразы).
+    """
+    if max_chars <= 0 or not prev.strip():
+        return ""
+    sentences = smart_sentence_split(prev)
+    if not sentences:
+        return prev.strip()
+    selected: List[str] = []
+    total = 0
+    for s in reversed(sentences):
+        s = s.strip()
+        if not s:
+            continue
+        add = len(s) + (1 if selected else 0)
+        if not selected:
+            selected.insert(0, s)
+            total = len(s)
+            continue
+        if total + add <= max_chars:
+            selected.insert(0, s)
+            total += add
+        else:
+            break
+    return " ".join(selected).strip()
+
+
 def semantic_chunking(
     text: str,
     chunk_max_size: int = DEFAULT_CHUNK_MAX_CHARS,
@@ -100,12 +130,7 @@ def semantic_chunking(
                 overlapped.append(c)
             else:
                 prev = chunks[i - 1]
-                # Обрезаем по границе слова: находим первый пробел после точки среза
-                start = max(0, len(prev) - overlap)
-                if start > 0:
-                    space_idx = prev.find(" ", start)
-                    start = space_idx + 1 if space_idx != -1 else start
-                tail = prev[start:].strip()
+                tail = sentence_overlap_suffix(prev, overlap)
                 overlapped.append(tail + "\n\n" + c if tail else c)
         return overlapped
     return chunks
@@ -139,8 +164,9 @@ def enhanced_text_chunking(
             if i == 0:
                 overlapped_chunks.append(chunk)
             else:
-                prev_words = chunks[i - 1].split()[-overlap // 10 :]
-                overlap_text = " ".join(prev_words) if prev_words else ""
-                overlapped_chunks.append(overlap_text + " " + chunk)
+                overlap_text = sentence_overlap_suffix(chunks[i - 1], overlap)
+                overlapped_chunks.append(
+                    f"{overlap_text} {chunk}".strip() if overlap_text else chunk
+                )
         return overlapped_chunks
     return chunks

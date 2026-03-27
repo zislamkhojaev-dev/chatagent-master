@@ -10,7 +10,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-VECTOR_SIZE = 1536  # OpenAI text-embedding-ada-002
+VECTOR_SIZE = settings.OPENAI_EMBEDDING_DIMENSIONS  # синхронно с эмбеддингами OpenAI
 
 
 def _qdrant_base() -> str:
