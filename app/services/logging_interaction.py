@@ -1,0 +1,42 @@
+"""Логирование взаимодействий в PostgreSQL. ТЗ Б.7."""
+import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+import asyncpg
+
+logger = logging.getLogger(__name__)
+
+
+async def log_interaction(
+    pool: Optional[asyncpg.Pool],
+    chat_id: str,
+    message: str,
+    response: str,
+    classification: Dict[str, str],
+    tokens: int,
+    escalation: bool,
+    language: str = "uz",
+) -> None:
+    if pool is None:
+        logger.warning("DB pool unavailable, skipping interaction log")
+        return
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO interactions (chat_id, message, response, classification, tokens, escalation, language, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                chat_id,
+                message,
+                response,
+                json.dumps(classification),
+                tokens,
+                escalation,
+                language,
+                datetime.now(),
+            )
+    except Exception as e:
+        logger.error("Error logging interaction: %s", e)

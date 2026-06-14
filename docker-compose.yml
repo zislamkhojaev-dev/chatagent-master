@@ -7,7 +7,6 @@ services:
       - "8000:8000"
       - "8001:8001"
     environment:
-      # Основные переменные
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -19,13 +18,29 @@ services:
       - REDIS_DB=0
       - PROMETHEUS_PORT=8001
       - APP_PORT=8000
-      - NO_PROXY=api.openai.com,localhost,127.0.0.1,postgres,redis,prometheus
-      - no_proxy=api.openai.com,localhost,127.0.0.1,postgres,redis,prometheus
+      # БЗ: kb/KB.pdf (ТЗ Б.4). Админка (опционально)
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - KB_MAX_FILE_SIZE_MB=${KB_MAX_FILE_SIZE_MB:-20}
+      # Qdrant (для гибридного поиска Б.1 — следующая итерация)
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - NO_PROXY=api.openai.com,localhost,127.0.0.1,postgres,redis,prometheus,qdrant
+      - no_proxy=api.openai.com,localhost,127.0.0.1,postgres,redis,prometheus,qdrant
     depends_on:
       - postgres
       - redis
     volumes:
       - .:/app
+      - kb_data:/app/kb
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
   postgres:
@@ -40,8 +55,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  # Redis: только хранение ключей (сессии, кэш, контекст чата). Лимит 512 МБ, при нехватке — evict по LRU.
   redis:
     image: redis:7
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -70,5 +87,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  chatagent_grafana_data: # Переименовал, чтобы соответствовало использованию выше
+  kb_data:
+  qdrant_data:
+  chatagent_grafana_data:
   prometheus_data:
