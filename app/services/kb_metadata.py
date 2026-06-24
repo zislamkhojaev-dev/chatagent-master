@@ -1,8 +1,10 @@
-"""Метаданные чанков KB: инференс при индексации, фильтры и оценка поиска."""
+"""Метаданные чанков KB: явные [kb] теги, legacy fallback, фильтры поиска."""
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from app.services.taxonomy import Taxonomy, get_taxonomy, validate_taxonomy_field
 
 logger = logging.getLogger(__name__)
 
@@ -15,49 +17,75 @@ CHANNEL_AGENT = "agent"
 CHANNEL_INFOKIOSK = "infokiosk"
 CHANNEL_GENERAL = "general"
 
-TOPIC_KEYWORDS = {
-    "qr": ["qr", "qr-kod", "qr kod", "сканирован", "skaner"],
-    "payment": ["оплат", "to'lov", "платеж", "payment"],
-    "refund": ["возврат", "qaytarish", "отмен", "bekor", "ошибочн"],
-    "sms": ["sms", "смс", "код не приходит"],
-    "identification": ["идентификац", "identifikats"],
-}
-
-SECTION_RULES: List[tuple] = [
-    (re.compile(r"агент|agent|cashout|агентск", re.I), AUDIENCE_AGENT, CHANNEL_AGENT),
-    (re.compile(r"инфокиоск|infokiosk|киоск|kiosk|терминал", re.I), AUDIENCE_BOTH, CHANNEL_INFOKIOSK),
-    (re.compile(r"мобильн|приложен|mobil\s*ilova|ilova|paynet\s*app", re.I), AUDIENCE_CLIENT, CHANNEL_MOBILE),
-    (re.compile(r"общ|umumiy|general|для\s+всех", re.I), AUDIENCE_BOTH, CHANNEL_GENERAL),
-]
+KB_TAG_LINE_RE = re.compile(r"^\[kb\s+([^\]]+)\]\s*$", re.I)
+KB_TAG_PREFIX_RE = re.compile(r"^\[kb\s+([^\]]+)\]\s*\n?", re.I | re.M)
+KB_TAG_INLINE_RE = re.compile(r"\[kb\s+[^\]]+\]\s*", re.I)
 
 
-def default_chunk_metadata() -> Dict[str, Any]:
+def default_chunk_metadata(taxonomy: Optional[Taxonomy] = None) -> Dict[str, Any]:
+    tax = taxonomy or get_taxonomy()
+    defaults = tax.defaults
     return {
-        "audience": AUDIENCE_BOTH,
-        "channel": CHANNEL_GENERAL,
-        "topic": "general",
+        "audience": defaults.get("audience", AUDIENCE_BOTH),
+        "channel": defaults.get("channel", CHANNEL_GENERAL),
+        "topic": defaults.get("topic", "general"),
         "section": "",
     }
 
 
-def infer_metadata_from_text(text: str, section: str = "") -> Dict[str, Any]:
-    """Определяет metadata по тексту чанка и текущему разделу PDF."""
-    meta = default_chunk_metadata()
+def parse_kb_tag_attrs(attr_string: str) -> Dict[str, str]:
+    attrs: Dict[str, str] = {}
+    for part in attr_string.strip().split():
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        attrs[key.lower().strip()] = value.lower().strip()
+    return attrs
+
+
+def merge_kb_tag_into_meta(
+    meta: Dict[str, Any],
+    attrs: Dict[str, str],
+    taxonomy: Optional[Taxonomy] = None,
+) -> Dict[str, Any]:
+    tax = taxonomy or get_taxonomy()
+    out = meta.copy()
+    for key in ("audience", "channel", "topic", "section"):
+        if key not in attrs:
+            continue
+        value = attrs[key]
+        if key in ("audience", "channel"):
+            validate_taxonomy_field(key, value, context="[kb] tag")
+        out[key] = value
+    return out
+
+
+def strip_kb_tags(text: str) -> str:
+    return KB_TAG_INLINE_RE.sub("", text).strip()
+
+
+def infer_metadata_legacy(
+    text: str,
+    section: str = "",
+    taxonomy: Optional[Taxonomy] = None,
+) -> Dict[str, Any]:
+    """Legacy fallback: эвристики по заголовку раздела и ключевым словам."""
+    tax = taxonomy or get_taxonomy()
+    meta = default_chunk_metadata(tax)
     meta["section"] = section
     combined = f"{section} {text}".lower()
 
-    for pattern, audience, channel in SECTION_RULES:
+    for pattern, audience, channel in tax.section_rules:
         if pattern.search(combined):
             meta["audience"] = audience
             meta["channel"] = channel
             break
 
-    for topic, keywords in TOPIC_KEYWORDS.items():
+    for topic, keywords in tax.topic_keywords.items():
         if any(kw in combined for kw in keywords):
             meta["topic"] = topic
             break
 
-    # Уточнение audience по явным маркерам в тексте чанка
     if re.search(r"\bагент\b|agent|cashout", combined) and not re.search(
         r"мобильн|приложен|ilova|клиент", combined
     ):
@@ -70,61 +98,208 @@ def infer_metadata_from_text(text: str, section: str = "") -> Dict[str, Any]:
     return meta
 
 
-def is_section_header(paragraph: str) -> bool:
-    """Короткая строка или markdown-заголовок — вероятный заголовок раздела."""
+def infer_metadata_from_text(text: str, section: str = "") -> Dict[str, Any]:
+    """Обратная совместимость: делегирует в legacy fallback."""
+    return infer_metadata_legacy(text, section)
+
+
+def infer_section_meta(section: str, taxonomy: Optional[Taxonomy] = None) -> Dict[str, Any]:
+    tax = taxonomy or get_taxonomy()
+    meta = default_chunk_metadata(tax)
+    meta["section"] = section
+    for pattern, audience, channel in tax.section_rules:
+        if pattern.search(section):
+            meta["audience"] = audience
+            meta["channel"] = channel
+            break
+    return meta
+
+
+def is_section_header(paragraph: str, taxonomy: Optional[Taxonomy] = None) -> bool:
+    tax = taxonomy or get_taxonomy()
     p = paragraph.strip()
     if not p or len(p) > 120:
         return False
     if p.startswith("#"):
         return True
-    if len(p.split()) <= 8 and any(rule[0].search(p) for rule in SECTION_RULES):
+    if len(p.split()) <= 8 and any(rule[0].search(p) for rule in tax.section_rules):
         return True
     return False
+
+
+@dataclass
+class ChunkValidationReport:
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    tagged_chunks: int = 0
+    legacy_chunks: int = 0
+    total_chunks: int = 0
+
+    def has_errors(self) -> bool:
+        return bool(self.errors)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "errors": self.errors,
+            "warnings": self.warnings,
+            "tagged_chunks": self.tagged_chunks,
+            "legacy_chunks": self.legacy_chunks,
+            "total_chunks": self.total_chunks,
+        }
+
+
+def validate_chunk_metadata(
+    record: Dict[str, Any],
+    taxonomy: Optional[Taxonomy] = None,
+) -> List[str]:
+    tax = taxonomy or get_taxonomy()
+    errors: List[str] = []
+    for key in ("audience", "channel"):
+        value = record.get(key)
+        if value and not tax.is_valid(key, value):
+            errors.append(f"invalid {key} '{value}'")
+    return errors
+
+
+def finalize_chunk_record(
+    text: str,
+    meta: Dict[str, Any],
+    *,
+    metadata_source: str,
+    validation: ChunkValidationReport,
+    taxonomy: Optional[Taxonomy] = None,
+) -> Dict[str, Any]:
+    record = {"text": text, **meta}
+    validation.errors.extend(validate_chunk_metadata(record, taxonomy))
+    if metadata_source == "tag":
+        validation.tagged_chunks += 1
+    else:
+        validation.legacy_chunks += 1
+    validation.total_chunks += 1
+    return record
 
 
 def chunk_text_with_metadata(
     text: str,
     chunk_max_size: int = 800,
     overlap: int = 100,
-) -> List[Dict[str, Any]]:
-    """Семантический чанкинг с наследованием metadata от раздела PDF."""
+) -> Tuple[List[Dict[str, Any]], ChunkValidationReport]:
+    """
+    Семантический чанкинг с явными [kb audience=... channel=... topic=...] тегами.
+    Без тегов — legacy fallback по заголовкам разделов и ключевым словам из taxonomy.json.
+    """
     from app.services.chunking import semantic_chunking
 
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    taxonomy = get_taxonomy()
+    validation = ChunkValidationReport()
+    current_meta = default_chunk_metadata(taxonomy)
     current_section = ""
-    sectioned_text_parts: List[tuple] = []
+    blocks: List[Tuple[str, Dict[str, Any], str, str]] = []
 
-    for p in paragraphs:
-        if is_section_header(p):
-            current_section = p.lstrip("#").strip()
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    for paragraph in paragraphs:
+        if KB_TAG_LINE_RE.match(paragraph):
+            attrs = parse_kb_tag_attrs(KB_TAG_LINE_RE.match(paragraph).group(1))
+            current_meta = merge_kb_tag_into_meta(current_meta, attrs, taxonomy)
             continue
-        sectioned_text_parts.append((current_section, p))
+
+        body = paragraph
+        block_meta = current_meta.copy()
+        metadata_source = "section"
+
+        prefix_match = KB_TAG_PREFIX_RE.match(paragraph)
+        if prefix_match:
+            attrs = parse_kb_tag_attrs(prefix_match.group(1))
+            block_meta = merge_kb_tag_into_meta(current_meta.copy(), attrs, taxonomy)
+            body = paragraph[prefix_match.end() :].strip()
+            metadata_source = "tag"
+        elif is_section_header(paragraph, taxonomy):
+            current_section = paragraph.lstrip("#").strip()
+            current_meta = infer_section_meta(current_section, taxonomy)
+            continue
+
+        if not body:
+            continue
+        blocks.append((current_section, block_meta, body, metadata_source))
 
     records: List[Dict[str, Any]] = []
-    for section, para in sectioned_text_parts:
-        sub_chunks = semantic_chunking(para, chunk_max_size=chunk_max_size, overlap=overlap)
+    for section, base_meta, body, metadata_source in blocks:
+        sub_chunks = semantic_chunking(body, chunk_max_size=chunk_max_size, overlap=overlap)
         for chunk_text in sub_chunks:
-            meta = infer_metadata_from_text(chunk_text, section)
-            records.append({"text": chunk_text, **meta})
+            clean_text = strip_kb_tags(chunk_text)
+            if not clean_text:
+                continue
+            if metadata_source == "tag":
+                meta = {**base_meta, "section": section}
+            else:
+                meta = infer_metadata_legacy(clean_text, section, taxonomy)
+                meta.update(
+                    {
+                        k: base_meta[k]
+                        for k in ("audience", "channel", "topic")
+                        if base_meta.get(k) != default_chunk_metadata(taxonomy).get(k)
+                    }
+                )
+            records.append(
+                finalize_chunk_record(
+                    clean_text,
+                    meta,
+                    metadata_source=metadata_source,
+                    validation=validation,
+                    taxonomy=taxonomy,
+                )
+            )
 
     if not records:
         for chunk_text in semantic_chunking(text, chunk_max_size=chunk_max_size, overlap=overlap):
-            meta = infer_metadata_from_text(chunk_text)
-            records.append({"text": chunk_text, **meta})
+            clean_text = strip_kb_tags(chunk_text)
+            if not clean_text:
+                continue
+            meta = infer_metadata_legacy(clean_text, taxonomy=taxonomy)
+            records.append(
+                finalize_chunk_record(
+                    clean_text,
+                    meta,
+                    metadata_source="legacy",
+                    validation=validation,
+                    taxonomy=taxonomy,
+                )
+            )
 
-    logger.info("Built %s chunks with metadata", len(records))
-    return records
+    if validation.legacy_chunks:
+        validation.warnings.append(
+            f"{validation.legacy_chunks}/{validation.total_chunks} chunks indexed "
+            "without explicit [kb] tags (legacy inference)"
+        )
+
+    logger.info(
+        "Built %s chunks with metadata (%s tagged, %s legacy)",
+        len(records),
+        validation.tagged_chunks,
+        validation.legacy_chunks,
+    )
+    return records, validation
 
 
 def normalize_chunk_record(item: Any) -> Dict[str, Any]:
     """Поддержка legacy формата (строка) и нового (dict с metadata)."""
     if isinstance(item, str):
-        meta = infer_metadata_from_text(item)
+        meta = infer_metadata_legacy(item)
         return {"text": item, **meta}
     if isinstance(item, dict):
         text = item.get("text", "")
-        base = infer_metadata_from_text(text, item.get("section", ""))
-        base.update({k: item.get(k, base[k]) for k in ("audience", "channel", "topic", "section")})
+        stored = {
+            k: item[k]
+            for k in ("audience", "channel", "topic", "section")
+            if item.get(k) is not None
+        }
+        if stored.get("audience") or stored.get("channel") or stored.get("topic"):
+            base = default_chunk_metadata()
+            base.update(stored)
+            base["text"] = text
+            return base
+        base = infer_metadata_legacy(text, item.get("section", ""))
+        base.update(stored)
         base["text"] = text
         return base
     return {**default_chunk_metadata(), "text": str(item)}
@@ -189,12 +364,9 @@ def build_metadata_filter(
     scenario: Optional[Any],
     slots: dict,
 ) -> MetadataFilter:
-    """Строит фильтр: по умолчанию client+both, уточняется слотами и сценарием."""
+    """Фильтр из слотов и полей сценария (default_audience, default_channel, topic)."""
     audiences: List[str] = []
     channels: List[str] = []
-
-    default_audience = getattr(scenario, "default_audience", None) or AUDIENCE_CLIENT
-    default_channel = getattr(scenario, "default_channel", None)
 
     if slots.get("user_type"):
         mapped = map_slot_to_audience(slots["user_type"])
@@ -206,19 +378,13 @@ def build_metadata_filter(
             channels.append(ch)
 
     if not audiences:
-        if scenario and scenario.id in ("agent_payment",):
-            audiences = [AUDIENCE_AGENT, AUDIENCE_BOTH]
-        elif scenario and scenario.id in ("infokiosk",):
-            audiences = [AUDIENCE_BOTH]
-            channels.append(CHANNEL_INFOKIOSK)
-        elif scenario and scenario.id in ("mobile_app", "sms_not_received"):
-            audiences = [AUDIENCE_CLIENT, AUDIENCE_BOTH]
-            channels.append(CHANNEL_MOBILE)
-        else:
-            audiences = [default_audience, AUDIENCE_BOTH]
+        default_audience = getattr(scenario, "default_audience", None) or AUDIENCE_CLIENT
+        audiences = [default_audience, AUDIENCE_BOTH]
 
-    if default_channel and default_channel not in channels:
-        channels.append(default_channel)
+    if scenario:
+        default_channel = getattr(scenario, "default_channel", None)
+        if default_channel and default_channel not in channels:
+            channels.append(default_channel)
 
     topic = getattr(scenario, "topic", None) if scenario else None
     topics = [topic] if topic else None

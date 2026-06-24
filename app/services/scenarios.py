@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
+from app.services.taxonomy import validate_taxonomy_field
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,12 @@ class ScenariosConfig(BaseModel):
 
 
 def validate_scenarios(data: dict) -> ScenariosConfig:
-    return ScenariosConfig.model_validate(data)
+    config = ScenariosConfig.model_validate(data)
+    for scenario in config.scenarios:
+        validate_taxonomy_field("audience", scenario.default_audience, scenario.id)
+        if scenario.default_channel:
+            validate_taxonomy_field("channel", scenario.default_channel, scenario.id)
+    return config
 
 
 def load_scenarios(force: bool = False) -> ScenariosConfig:

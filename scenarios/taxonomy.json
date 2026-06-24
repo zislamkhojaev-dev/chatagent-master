@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "defaults": {
+    "audience": "both",
+    "channel": "general",
+    "topic": "general"
+  },
+  "audiences": ["client", "agent", "both"],
+  "channels": ["mobile_app", "agent", "infokiosk", "general"],
+  "topics": ["qr", "payment", "refund", "sms", "identification", "general"],
+  "legacy": {
+    "section_rules": [
+      {
+        "pattern": "агент|agent|cashout|агентск",
+        "audience": "agent",
+        "channel": "agent"
+      },
+      {
+        "pattern": "инфокиоск|infokiosk|киоск|kiosk|терминал",
+        "audience": "both",
+        "channel": "infokiosk"
+      },
+      {
+        "pattern": "мобильн|приложен|mobil\\s*ilova|ilova|paynet\\s*app",
+        "audience": "client",
+        "channel": "mobile_app"
+      },
+      {
+        "pattern": "общ|umumiy|general|для\\s+всех",
+        "audience": "both",
+        "channel": "general"
+      }
+    ],
+    "topic_keywords": {
+      "qr": ["qr", "qr-kod", "qr kod", "сканирован", "skaner"],
+      "payment": ["оплат", "to'lov", "платеж", "payment"],
+      "refund": ["возврат", "qaytarish", "отмен", "bekor", "ошибочн"],
+      "sms": ["sms", "смс", "код не приходит"],
+      "identification": ["идентификац", "identifikats"]
+    }
+  }
+}

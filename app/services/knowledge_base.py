@@ -109,10 +109,10 @@ def load_knowledge_base_chunks(
 async def index_pdf_to_qdrant(
     redis_client: Redis,
     pdf_path: Optional[Path] = None,
-) -> Tuple[List[str], str]:
+) -> Tuple[List[dict], str, Any]:
     """
     Индексирует PDF в Qdrant: чанки → эмбеддинги → коллекция kb_v1_{timestamp} → alias kb_current.
-    Сохраняет чанки в knowledge_base.json. Возвращает (chunks, collection_name).
+    Сохраняет чанки в knowledge_base.json. Возвращает (records, collection_name, validation).
     """
     from app.services.qdrant_store import (
         get_qdrant_client,
@@ -123,7 +123,11 @@ async def index_pdf_to_qdrant(
         get_collection_by_alias,
     )
 
-    from app.services.kb_metadata import chunk_text_with_metadata, records_to_texts
+    from app.services.kb_metadata import (
+        ChunkValidationReport,
+        chunk_text_with_metadata,
+        records_to_texts,
+    )
 
     path = pdf_path or _kb_path()
     if not path.exists():
@@ -136,7 +140,13 @@ async def index_pdf_to_qdrant(
         for page in pdf.pages:
             text = page.extract_text() or ""
             full_text += text + "\n"
-    kb_records = chunk_text_with_metadata(full_text, chunk_max_size=800, overlap=100)
+    kb_records, validation = chunk_text_with_metadata(full_text, chunk_max_size=800, overlap=100)
+    if validation.has_errors():
+        raise ValueError(
+            "KB validation failed: " + "; ".join(validation.errors[:10])
+        )
+    for warning in validation.warnings:
+        logger.warning("KB indexing: %s", warning)
     chunks = records_to_texts(kb_records)
     logger.info("Created %s chunks with metadata for Qdrant", len(chunks))
     embeddings = await asyncio.gather(
@@ -172,5 +182,11 @@ async def index_pdf_to_qdrant(
         logger.debug("No previous alias or error: %s", e)
     set_alias(client, collection_name, settings.QDRANT_ALIAS)
     save_knowledge_base(kb_records)
-    save_kb_hash(get_file_hash(str(path)))
-    return kb_records, collection_name
+    hash_data = load_kb_hash_data() or {}
+    hash_data["pdf_hash"] = get_file_hash(str(path))
+    hash_data["validation"] = validation.to_dict()
+    path_hash = _hash_file_path()
+    path_hash.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_hash, "w", encoding="utf-8") as f:
+        json.dump(hash_data, f, ensure_ascii=False)
+    return kb_records, collection_name, validation

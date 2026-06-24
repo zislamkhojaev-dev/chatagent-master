@@ -62,6 +62,7 @@ class Settings:
     SCENARIOS_DIR: Path = Path(os.getenv("SCENARIOS_DIR", "scenarios"))
     SCENARIOS_FILE: Path = SCENARIOS_DIR / "scenarios.json"
     SCENARIOS_BACKUP_FILE: Path = SCENARIOS_DIR / "scenarios_backup.json"
+    TAXONOMY_FILE: Path = SCENARIOS_DIR / "taxonomy.json"
 
     # Константы пайплайна (вынесены в конфиг по Б.8)
     MAX_HISTORY_SIZE: int = int(os.getenv("MAX_HISTORY_SIZE", "10"))

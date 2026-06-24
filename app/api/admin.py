@@ -86,7 +86,7 @@ async def index_db(request: Request, _: None = Depends(verify_admin)):
     try:
         async with INDEX_LOCK:
             redis_client = request.app.state.redis
-            chunks, _ = await index_pdf_to_qdrant(redis_client, KB_PATH)
+            chunks, _, validation = await index_pdf_to_qdrant(redis_client, KB_PATH)
             from app.services.kb_metadata import records_to_texts
 
             request.app.state.knowledge_base = chunks
@@ -96,9 +96,14 @@ async def index_db(request: Request, _: None = Depends(verify_admin)):
             request.app.state.kb_index_ready = True
             data = load_kb_hash_data(HASH_FILE) or {}
             data["index_date"] = datetime.now().strftime("%d.%m.%Y %H:%M")
+            data["validation"] = validation.to_dict()
             with open(HASH_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
-        return {"status": "success", "date": data["index_date"]}
+        return {
+            "status": "success",
+            "date": data["index_date"],
+            "validation": validation.to_dict(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка индексации: {e}")
     finally:

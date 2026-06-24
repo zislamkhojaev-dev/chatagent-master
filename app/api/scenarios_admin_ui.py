@@ -159,6 +159,14 @@ def get_admin_scenarios_html() -> str:
 
     <div id="result" class="result"></div>
   </div>
+  <datalist id="topic-hints">
+    <option value="qr">
+    <option value="payment">
+    <option value="refund">
+    <option value="sms">
+    <option value="identification">
+    <option value="general">
+  </datalist>
 
   <script>
     const api = (path, opts = {}) => fetch(path, { credentials: 'include', ...opts });
@@ -170,7 +178,6 @@ def get_admin_scenarios_html() -> str:
     const POLICIES = ['never', 'if_ambiguous', 'always'];
     const AUDIENCES = ['client', 'agent', 'both'];
     const CHANNELS = ['', 'mobile_app', 'agent', 'infokiosk', 'general'];
-    const TOPICS = ['', 'qr', 'payment', 'refund', 'sms', 'identification', 'general'];
 
     function showResult(ok, msg) {
       const el = document.getElementById('result');
@@ -195,7 +202,7 @@ def get_admin_scenarios_html() -> str:
         clarify_policy: 'if_ambiguous',
         default_audience: 'client',
         default_channel: null,
-        topic: 'general',
+        topic: null,
         required_slots: [],
         search_hint: '',
         max_clarifications: null,
@@ -254,8 +261,7 @@ def get_admin_scenarios_html() -> str:
         selectOptions(AUDIENCES, s.default_audience || 'client') + '</select></div>' +
         '<div class="field"><label>default_channel</label><select class="f-channel">' +
         selectOptions(CHANNELS, s.default_channel || '', ['— не задан —', 'mobile_app', 'agent', 'infokiosk', 'general']) + '</select></div>' +
-        '<div class="field"><label>topic</label><select class="f-topic">' +
-        selectOptions(TOPICS, s.topic || '', ['— не задан —', 'qr', 'payment', 'refund', 'sms', 'identification', 'general']) + '</select></div>' +
+        '<div class="field"><label>topic</label><input class="f-topic" list="topic-hints" value="' + esc(s.topic || '') + '" placeholder="qr, payment, cashout…"></div>' +
         '<div class="field"><label>max_clarifications</label><input type="number" class="f-maxclar" min="0" placeholder="глобальный" value="' + (s.max_clarifications != null ? s.max_clarifications : '') + '"></div>' +
         '<div class="field field-full"><label>search_hint</label><input class="f-hint" value="' + esc(s.search_hint) + '" placeholder="QR {user_type}"></div>' +
         '<div class="field field-full"><label>triggers (по одному на строку)</label>' +
@@ -358,7 +364,7 @@ def get_admin_scenarios_html() -> str:
         s.default_audience = card.querySelector('.f-audience').value;
         const ch = card.querySelector('.f-channel').value;
         s.default_channel = ch || null;
-        const tp = card.querySelector('.f-topic').value;
+        const tp = card.querySelector('.f-topic').value.trim();
         s.topic = tp || null;
         const mc = card.querySelector('.f-maxclar').value;
         s.max_clarifications = mc === '' ? null : parseInt(mc, 10);

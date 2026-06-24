@@ -3,11 +3,45 @@ from app.services.kb_metadata import (
     MetadataFilter,
     build_metadata_filter,
     chunk_matches_filter,
+    chunk_text_with_metadata,
     evaluate_kb_hits,
     infer_metadata_from_text,
+    merge_kb_tag_into_meta,
+    parse_kb_tag_attrs,
+    strip_kb_tags,
     to_qdrant_filter,
 )
-from app.services.scenarios import Scenario, load_scenarios
+from app.services.scenarios import Scenario, validate_scenarios
+from app.services.taxonomy import get_taxonomy, load_taxonomy
+
+
+def test_parse_kb_tag_attrs():
+    attrs = parse_kb_tag_attrs("audience=client channel=mobile_app topic=qr")
+    assert attrs == {
+        "audience": "client",
+        "channel": "mobile_app",
+        "topic": "qr",
+    }
+
+
+def test_strip_kb_tags():
+    text = "[kb audience=client topic=qr]\nQR не сканируется."
+    assert strip_kb_tags(text) == "QR не сканируется."
+
+
+def test_chunk_with_kb_tag():
+    text = (
+        "[kb audience=client channel=mobile_app topic=qr]\n"
+        "QR не сканируется: перезапустите приложение."
+    )
+    records, validation = chunk_text_with_metadata(text, chunk_max_size=800, overlap=0)
+    assert len(records) >= 1
+    assert records[0]["audience"] == "client"
+    assert records[0]["channel"] == "mobile_app"
+    assert records[0]["topic"] == "qr"
+    assert "[kb" not in records[0]["text"]
+    assert validation.tagged_chunks >= 1
+    assert validation.legacy_chunks == 0
 
 
 def test_infer_metadata_agent_section():
@@ -66,6 +100,83 @@ def test_build_metadata_filter_default_client():
     )
     filt = build_metadata_filter(scenario, {})
     assert "client" in filt.audiences
+    assert filt.topics == ["qr"]
+
+
+def test_build_metadata_filter_from_scenario_fields_not_id():
+    scenario = Scenario(
+        id="agent_payment",
+        triggers=["агент"],
+        default_audience="agent",
+        default_channel="agent",
+        topic="payment",
+    )
+    filt = build_metadata_filter(scenario, {})
+    assert "agent" in filt.audiences
+    assert "agent" in filt.channels
+    assert filt.topics == ["payment"]
+
+
+def test_merge_kb_tag_rejects_invalid_audience():
+    try:
+        merge_kb_tag_into_meta(
+            {"audience": "both", "channel": "general", "topic": "general"},
+            {"audience": "invalid_audience"},
+        )
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "invalid audience" in str(e)
+
+
+def test_merge_kb_tag_accepts_freeform_topic():
+    meta = merge_kb_tag_into_meta(
+        {"audience": "both", "channel": "general", "topic": "general"},
+        {"topic": "cashout"},
+    )
+    assert meta["topic"] == "cashout"
+
+
+def test_chunk_with_freeform_topic():
+    text = "[kb audience=client topic=cashout]\nИнструкция по cashout."
+    records, validation = chunk_text_with_metadata(text, chunk_max_size=800, overlap=0)
+    assert records[0]["topic"] == "cashout"
+    assert not validation.has_errors()
+
+
+def test_validate_scenarios_with_custom_topic():
+    load_taxonomy(force=True)
+    config = validate_scenarios(
+        {
+            "version": 1,
+            "scenarios": [
+                {
+                    "id": "cashout_help",
+                    "triggers": ["cashout"],
+                    "default_audience": "agent",
+                    "topic": "cashout",
+                }
+            ],
+        }
+    )
+    assert config.scenarios[0].topic == "cashout"
+
+
+def test_validate_scenarios_against_taxonomy():
+    load_taxonomy(force=True)
+    config = validate_scenarios(
+        {
+            "version": 1,
+            "scenarios": [
+                {
+                    "id": "test",
+                    "triggers": ["test"],
+                    "default_audience": "client",
+                    "topic": "qr",
+                }
+            ],
+        }
+    )
+    assert len(config.scenarios) == 1
 
 
 def test_to_qdrant_filter_returns_model():
