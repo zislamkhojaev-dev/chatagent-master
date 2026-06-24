@@ -132,13 +132,17 @@ def search(
     collection_name: str,
     query_vector: List[float],
     limit: int = 20,
+    query_filter: Optional[Any] = None,
 ) -> List[tuple[Any, float, dict]]:
-    """Возвращает список (id, score, payload). Использует query_points (qdrant-client >= 1.7)."""
-    response = client.query_points(
-        collection_name=collection_name,
-        query=query_vector,
-        limit=limit,
-    )
+    """Возвращает список (id, score, payload)."""
+    kwargs: dict = {
+        "collection_name": collection_name,
+        "query": query_vector,
+        "limit": limit,
+    }
+    if query_filter:
+        kwargs["query_filter"] = query_filter
+    response = client.query_points(**kwargs)
     return [(r.id, r.score, r.payload or {}) for r in response.points]
 
 

@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "updated_at": "14.06.2026 12:00",
+  "scenarios": [
+    {
+      "id": "qr_issue",
+      "enabled": true,
+      "triggers": ["qr", "qr kod", "qr-kod", "qr-код", "сканирование", "skanerlash"],
+      "clarify_policy": "if_ambiguous",
+      "default_audience": "client",
+      "topic": "qr",
+      "required_slots": [
+        {
+          "id": "user_type",
+          "question_ru": "Вы клиент мобильного приложения Paynet или агент, принимающий оплату?",
+          "question_uz": "Siz Paynet mobil ilovasi foydalanuvchisiz yoki to'lov qabul qiluvchi agentsiz?"
+        }
+      ],
+      "search_hint": "QR {user_type}",
+      "max_clarifications": 2
+    },
+    {
+      "id": "payment_failed",
+      "enabled": true,
+      "triggers": ["платеж не прошел", "to'lov o'tmadi", "оплата не прошла", "to'lov amalga oshmadi", "ошибка оплаты", "to'lov xatosi"],
+      "clarify_policy": "if_ambiguous",
+      "default_audience": "client",
+      "topic": "payment",
+      "required_slots": [
+        {
+          "id": "payment_channel",
+          "question_ru": "Где вы совершали оплату: в мобильном приложении, у агента или в инфокиоске?",
+          "question_uz": "Qayerda to'lov qildingiz: mobil ilovada, agentda yoki infokioskda?"
+        }
+      ],
+      "search_hint": "ошибка оплаты {payment_channel}",
+      "max_clarifications": 2
+    },
+    {
+      "id": "refund",
+      "enabled": true,
+      "triggers": ["возврат", "qaytarish", "отмена платежа", "to'lovni bekor", "ошибочный платеж", "xato to'lov"],
+      "clarify_policy": "if_ambiguous",
+      "default_audience": "client",
+      "topic": "refund",
+      "required_slots": [
+        {
+          "id": "payment_channel",
+          "question_ru": "Через что была оплата: приложение, агент или инфокиоск?",
+          "question_uz": "To'lov qayerdan amalga oshirilgan: ilova, agent yoki infokiosk?"
+        }
+      ],
+      "search_hint": "возврат отмена ошибочного платежа {payment_channel}",
+      "max_clarifications": 2
+    },
+    {
+      "id": "sms_not_received",
+      "enabled": true,
+      "triggers": ["sms", "смс", "не приходит sms", "sms kelmayapti", "код не приходит", "kod kelmayapti"],
+      "clarify_policy": "never",
+      "default_audience": "client",
+      "default_channel": "mobile_app",
+      "topic": "sms",
+      "required_slots": [],
+      "search_hint": "SMS не приходит мобильное приложение",
+      "max_clarifications": 0
+    },
+    {
+      "id": "infokiosk",
+      "enabled": true,
+      "triggers": ["инфокиоск", "infokiosk", "киоск", "kiosk", "терминал"],
+      "clarify_policy": "never",
+      "default_audience": "both",
+      "default_channel": "infokiosk",
+      "topic": "payment",
+      "required_slots": [],
+      "search_hint": "инфокиоск",
+      "max_clarifications": 0
+    },
+    {
+      "id": "agent_payment",
+      "enabled": true,
+      "triggers": ["агент не", "agent to'lov", "чек не выдал", "cashout", "agent chek"],
+      "clarify_policy": "never",
+      "default_audience": "agent",
+      "default_channel": "agent",
+      "topic": "payment",
+      "required_slots": [],
+      "search_hint": "агент оплата",
+      "max_clarifications": 0
+    },
+    {
+      "id": "mobile_app",
+      "enabled": true,
+      "triggers": ["приложение", "ilova", "мобильное", "mobil", "paynet app", "paynet ilova", "идентификация", "identifikatsiya"],
+      "clarify_policy": "never",
+      "default_audience": "client",
+      "default_channel": "mobile_app",
+      "topic": "general",
+      "required_slots": [],
+      "search_hint": "мобильное приложение Paynet",
+      "max_clarifications": 0
+    }
+  ],
+  "auto_escalate_categories": ["Хулиганство / Bezorilik", "Bezorilik"],
+  "default_max_clarifications": 2
+}

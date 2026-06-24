@@ -10,9 +10,10 @@ from redis.asyncio import Redis
 from prometheus_client import start_http_server
 
 from app.core.config import settings
-from app.api import process, health, synonyms, language, admin
+from app.api import process, health, synonyms, language, admin, scenarios_admin
 from app.services.session import cleanup_inactive_sessions
 from app.utils.synonyms import load_synonyms
+from app.services.scenarios import load_scenarios
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +30,11 @@ async def lifespan(app: FastAPI):
         load_synonyms()
     except Exception as e:
         logger.error("Failed to load synonyms: %s", e)
+
+    try:
+        load_scenarios()
+    except Exception as e:
+        logger.error("Failed to load scenarios: %s", e)
 
     db_pool = None
     try:
@@ -77,11 +83,12 @@ async def lifespan(app: FastAPI):
         from app.services.qdrant_store import get_qdrant_client, get_collection_by_alias
         from app.services.knowledge_base import load_knowledge_base_chunks
         from app.services.bm25_store import build_bm25
+        from app.services.kb_metadata import records_to_texts
         qdrant_client = get_qdrant_client()
         if qdrant_client and get_collection_by_alias(qdrant_client, settings.QDRANT_ALIAS):
             chunks = load_knowledge_base_chunks()
             if chunks:
-                bm25_index = build_bm25(chunks)
+                bm25_index = build_bm25(records_to_texts(chunks))
                 qdrant_collection = settings.QDRANT_ALIAS
                 knowledge_base = chunks
                 logger.info("Knowledge base loaded from Qdrant + BM25 (%s chunks)", len(chunks))
@@ -127,6 +134,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(synonyms.router, tags=["synonyms"])
 app.include_router(language.router, tags=["language"])
 app.include_router(admin.router, tags=["admin"])
+app.include_router(scenarios_admin.router, tags=["scenarios"])
 
 
 if __name__ == "__main__":

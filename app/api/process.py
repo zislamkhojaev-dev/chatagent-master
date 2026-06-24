@@ -1,4 +1,4 @@
-"""POST /process_message, POST /escalate. ТЗ Б.7, Б.3 (опциональный language)."""
+"""POST /process_message, POST /escalate."""
 import json
 import logging
 import time
@@ -8,29 +8,27 @@ from redis.asyncio import Redis
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.models import MessageRequest, MessageResponse, EscalateRequest, EscalateResponse
+from app.services.agent.orchestrator import AgentContext, run_agent
 from app.services.anonymization import anonymize_message
 from app.services.classification import classify_query
 from app.services.constants import OPERATOR_KEYWORDS
 from app.services.embeddings import get_embedding
+from app.services.escalation import enrich_classification_for_escalation, perform_escalation
 from app.services.language import detect_language_openai, set_request_language
 from app.services.logging_interaction import log_interaction
-from app.services.response import generate_response
-from app.services.search import find_relevant_context
+from app.services.scenarios import should_auto_escalate_category
 from app.services.context import schedule_context_update
 from app.services.session import (
+    append_assistant_message,
+    get_agent_state,
+    get_messages,
     update_session_and_get_history,
-    get_escalation_keys_to_delete,
 )
 from app.utils import redis_utils
 from app.utils.metrics import (
     REQUEST_COUNT,
     REQUEST_LATENCY,
-    ESCALATION_COUNT,
-    HIGH_LOAD_ESCALATIONS_TOTAL,
     UNIQUE_CHATS_TOTAL,
-    ACTIVE_CHATS,
-    SESSIONS_TOTAL,
-    SESSION_DURATION,
     UNCERTAIN_REQUESTS,
 )
 from app.core.config import settings
@@ -39,6 +37,12 @@ from app.core.dependencies import get_redis
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _is_rudeness_classification(classification: dict) -> bool:
+    theme = classification.get("theme", "").lower()
+    category = classification.get("category", "").lower()
+    return "хулиганство" in theme or "bezorilik" in theme or "bezorilik" in category
 
 
 @router.post("/process_message", response_model=MessageResponse)
@@ -55,7 +59,6 @@ async def process_message(
         if not chat_id or not message:
             raise HTTPException(status_code=400, detail="Missing chat_id or message")
 
-        # Б.3: если передан language — установить контекст и не вызывать детекцию
         if request.language in ("uz", "ru"):
             set_request_language(request.language)
             language = request.language
@@ -64,6 +67,7 @@ async def process_message(
             language, is_uncertain = await detect_language_openai(
                 message, chat_id, redis_client
             )
+        await redis_utils.safe_redis_set(redis_client, f"chat:{chat_id}:last_language", language)
         logger.info("Language: %s, is_uncertain: %s", language, is_uncertain)
 
         anonymized_message = anonymize_message(message)
@@ -83,7 +87,7 @@ async def process_message(
                 history=[],
             )
 
-        history, last_embedding_str, count_str, escalation_count_str, seen_is_new = (
+        history, last_embedding_str, count_str, escalation_count_str, seen_is_new, messages = (
             await update_session_and_get_history(redis_client, chat_id, anonymized_message)
         )
         if seen_is_new:
@@ -100,100 +104,88 @@ async def process_message(
         await redis_utils.safe_redis_set(redis_client, f"chat:{chat_id}:embedding", json.dumps(embedding))
 
         classification = await classify_query(anonymized_message, language, redis_client)
-        escalation_count = int(escalation_count_str)
+        agent_state = await get_agent_state(redis_client, chat_id)
 
-        if any(kw in anonymized_message.lower() for kw in OPERATOR_KEYWORDS) or count >= 3:
-            escalation_count = await redis_utils.safe_redis_incr(
-                redis_client, f"chat:{chat_id}:escalation_count"
+        # Hard escalation guards
+        hard_reason = None
+        if any(kw in anonymized_message.lower() for kw in OPERATOR_KEYWORDS):
+            hard_reason = "user_request"
+        elif count >= 3:
+            hard_reason = "repeat"
+        elif _is_rudeness_classification(classification) or should_auto_escalate_category(classification):
+            hard_reason = "rudeness"
+
+        if hard_reason:
+            esc = await perform_escalation(
+                redis_client,
+                chat_id,
+                language,
+                hard_reason,
+                messages=messages,
+                agent_state=agent_state,
+                classification=classification,
             )
-            if escalation_count >= 3:
-                HIGH_LOAD_ESCALATIONS_TOTAL.inc()
-                high_load_response = (
-                    "Kechirasiz, hozirda yuklama yuqori. Iltimos, +998712020707 raqamiga qo'ng'iroq qiling."
-                    if language == "uz"
-                    else "Извините, сейчас высокая нагрузка. Пожалуйста, позвоните в колл-центр по номеру +998712020707."
-                )
-                await log_interaction(
-                    req.app.state.db_pool, chat_id, anonymized_message, high_load_response,
-                    {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Высокая нагрузка"},
-                    0, False, language,
-                )
-                return MessageResponse(
-                    status="high_load",
-                    chat_id=chat_id,
-                    response=high_load_response,
-                    classification={"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Высокая нагрузка"},
-                    escalation=False,
-                    history=history,
-                )
-            ESCALATION_COUNT.inc()
-            escalation_response = (
-                "Operatorga o'tkazamiz. Biroz kuting, iltimos."
-                if language == "uz"
-                else "Передаём оператору. Пожалуйста, подождите."
+            log_class = enrich_classification_for_escalation(
+                classification, esc.escalation_summary, esc.escalation_reason
             )
             await log_interaction(
-                req.app.state.db_pool, chat_id, anonymized_message, escalation_response,
-                {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Передача оператору"},
-                0, True, language,
+                req.app.state.db_pool, chat_id, anonymized_message, esc.response,
+                log_class, esc.tokens, esc.escalation, language,
             )
-            start_time_str = await redis_utils.safe_redis_get(
-                redis_client, f"chat:{chat_id}:start_time"
-            )
-            if start_time_str:
-                SESSION_DURATION.observe(time.time() - float(start_time_str))
-                SESSIONS_TOTAL.inc()
-            await redis_utils.safe_redis_delete(
-                redis_client, *get_escalation_keys_to_delete(chat_id)
-            )
-            active_chats = len(await redis_utils.safe_redis_scan_iter(redis_client, "chat:*:active"))
-            ACTIVE_CHATS.set(active_chats)
             return MessageResponse(
-                status="escalation",
+                status=esc.status,
                 chat_id=chat_id,
-                response=escalation_response,
-                classification={"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Передача оператору"},
-                escalation=True,
+                response=esc.response,
+                classification=log_class,
+                escalation=esc.escalation,
                 history=history,
+                mode="escalation",
+                escalation_summary=esc.escalation_summary,
+                escalation_reason=esc.escalation_reason,
             )
 
         if is_uncertain:
-            logger.info("Uncertain text, skipping context search for chat %s", chat_id)
             UNCERTAIN_REQUESTS.inc()
-            context = []
-        else:
-            kb_chunks = req.app.state.knowledge_base or []
-            qdrant_client = getattr(req.app.state, "qdrant_client", None)
-            qdrant_collection = getattr(req.app.state, "qdrant_collection", None)
-            bm25_index = getattr(req.app.state, "bm25_index", None)
-            context = await find_relevant_context(
-                anonymized_message,
-                embedding,
-                kb_chunks,
-                language,
-                qdrant_client=qdrant_client,
-                qdrant_collection=qdrant_collection,
-                bm25_index=bm25_index,
-                top_k=5,
-            )
-        chat_context = await redis_utils.safe_redis_get(
-            redis_client, f"chat:{chat_id}:context", default=""
-        ) or ""
-        ai_response, tokens = await generate_response(
-            context, anonymized_message, history, language, chat_context=chat_context or None
+
+        if not settings.AGENT_ENABLED:
+            raise HTTPException(status_code=503, detail="Agent mode disabled")
+
+        agent_result = await run_agent(AgentContext(
+            chat_id=chat_id,
+            message=anonymized_message,
+            language=language,
+            messages=messages,
+            classification=classification,
+            app_state=req.app.state,
+            redis_client=redis_client,
+        ))
+
+        await append_assistant_message(redis_client, chat_id, agent_result.text)
+
+        log_class = enrich_classification_for_escalation(
+            classification,
+            agent_result.escalation_summary,
+            agent_result.escalation_reason,
+            agent_result.tools_used,
         )
         await log_interaction(
-            req.app.state.db_pool, chat_id, anonymized_message, ai_response,
-            classification, tokens, False, language,
+            req.app.state.db_pool, chat_id, anonymized_message, agent_result.text,
+            log_class, agent_result.tokens, agent_result.escalation, language,
         )
-        schedule_context_update(redis_client, chat_id, anonymized_message, ai_response)
+        if not agent_result.escalation:
+            schedule_context_update(redis_client, chat_id, anonymized_message, agent_result.text)
+
         return MessageResponse(
-            status="success",
+            status=agent_result.status,
             chat_id=chat_id,
-            response=ai_response,
-            classification=classification,
-            escalation=False,
+            response=agent_result.text,
+            classification=log_class,
+            escalation=agent_result.escalation,
             history=history,
+            mode=agent_result.mode,
+            tools_used=agent_result.tools_used,
+            escalation_summary=agent_result.escalation_summary,
+            escalation_reason=agent_result.escalation_reason,
         )
 
 
@@ -206,61 +198,48 @@ async def escalate(
     REQUEST_COUNT.labels(endpoint="/escalate").inc()
     with REQUEST_LATENCY.labels(endpoint="/escalate").time():
         chat_id = request.chat_id
-        async with redis_client.pipeline(transaction=True) as pipe:
-            pipe.lrange(f"chat:{chat_id}:history", 0, -1)
-            pipe.get(f"chat:{chat_id}:last_language")
-            pipe.incr(f"chat:{chat_id}:escalation_count")
-            results = await pipe.execute()
-        history = list(results[0] or [])
-        last_language = results[1] or "uz"
-        escalation_count = int(results[2])
-        if escalation_count >= 3:
-            HIGH_LOAD_ESCALATIONS_TOTAL.inc()
-            high_load_response = (
-                "Kechirasiz, hozirda yuklama yuqori. Iltimos, +998712020707 raqamiga qo'ng'iroq qiling."
-                if last_language == "uz"
-                else "Извините, сейчас высокая нагрузка. Пожалуйста, позвоните в колл-центр по номеру +998712020707."
-            )
-            await log_interaction(
-                req.app.state.db_pool, chat_id, "Manual escalation", high_load_response,
-                {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Высокая нагрузка"},
-                0, False, last_language,
-            )
-            return EscalateResponse(
-                status="high_load",
-                chat_id=chat_id,
-                response=high_load_response,
-                history=history,
-            )
-        ESCALATION_COUNT.inc()
-        escalation_response = (
-            "Chat operatorga o'tkazildi. Tez orada siz bilan bog'lanishadi."
-            if last_language == "uz"
-            else "Чат передан оператору. Скоро с вами свяжутся."
+        messages = await get_messages(redis_client, chat_id)
+        last_language = await redis_utils.safe_redis_get(
+            redis_client, f"chat:{chat_id}:last_language", "uz"
+        ) or "uz"
+        agent_state = await get_agent_state(redis_client, chat_id)
+        history = [m["content"] for m in messages if m.get("role") == "user"]
+        classification = {
+            "theme": "Запрос оператора",
+            "category": "Эскалация",
+            "subcategory": "Ручная эскалация",
+        }
+
+        esc = await perform_escalation(
+            redis_client,
+            chat_id,
+            last_language,
+            "user_request",
+            messages=messages,
+            agent_state=agent_state,
+            classification=classification,
+            manual=True,
+            increment_count=True,
         )
-        await log_interaction(
-            req.app.state.db_pool, chat_id, "Manual escalation", escalation_response,
-            {"theme": "Запрос оператора", "category": "Эскалация", "subcategory": "Передача оператору"},
-            0, True, last_language,
-        )
+
         seen = await redis_utils.safe_redis_get(redis_client, f"chat:{chat_id}:seen")
         if seen is None:
             await redis_utils.safe_redis_set(redis_client, f"chat:{chat_id}:seen", "1")
             UNIQUE_CHATS_TOTAL.inc()
-        start_time_str = await redis_utils.safe_redis_get(
-            redis_client, f"chat:{chat_id}:start_time"
+
+        log_class = enrich_classification_for_escalation(
+            classification, esc.escalation_summary, esc.escalation_reason
         )
-        if start_time_str:
-            SESSION_DURATION.observe(time.time() - float(start_time_str))
-            SESSIONS_TOTAL.inc()
-            await redis_utils.safe_redis_delete(
-                redis_client, *get_escalation_keys_to_delete(chat_id)
-            )
-        active_chats = len(await redis_utils.safe_redis_scan_iter(redis_client, "chat:*:active"))
-        ACTIVE_CHATS.set(active_chats)
+        await log_interaction(
+            req.app.state.db_pool, chat_id, "Manual escalation", esc.response,
+            log_class, esc.tokens, esc.escalation, last_language,
+        )
+
         return EscalateResponse(
-            status="success",
+            status=esc.status,
             chat_id=chat_id,
-            response=escalation_response,
+            response=esc.response,
             history=history,
+            escalation_summary=esc.escalation_summary,
+            escalation_reason=esc.escalation_reason,
         )

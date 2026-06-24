@@ -87,8 +87,10 @@ async def index_db(request: Request, _: None = Depends(verify_admin)):
         async with INDEX_LOCK:
             redis_client = request.app.state.redis
             chunks, _ = await index_pdf_to_qdrant(redis_client, KB_PATH)
+            from app.services.kb_metadata import records_to_texts
+
             request.app.state.knowledge_base = chunks
-            request.app.state.bm25_index = build_bm25(chunks)
+            request.app.state.bm25_index = build_bm25(records_to_texts(chunks))
             request.app.state.qdrant_client = get_qdrant_client()
             request.app.state.qdrant_collection = settings.QDRANT_ALIAS
             request.app.state.kb_index_ready = True
@@ -190,6 +192,7 @@ def get_admin_kb_html() -> str:
   </style>
 </head>
 <body>
+  <p class="nav"><strong>База знаний</strong> · <a href="/admin/scenarios">Сценарии агента</a></p>
   <h1>Управление базой знаний</h1>
   <p class="date">Дата последнего обновления: <span id="lastDate">—</span></p>
 
