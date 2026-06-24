@@ -53,3 +53,12 @@ LANGUAGE_DETECTION_ERRORS = Counter(
 UNCERTAIN_REQUESTS = Counter(
     "uncertain_requests_total", "Total number of uncertain requests"
 )
+AGENT_TOOL_CALLS = Counter(
+    "agent_tool_calls_total", "Agent tool invocations", ["tool_name"]
+)
+AGENT_CLARIFICATIONS = Counter(
+    "agent_clarifications_total", "Agent clarification questions"
+)
+AGENT_STEPS = Counter(
+    "agent_steps_total", "Agent loop iterations"
+)

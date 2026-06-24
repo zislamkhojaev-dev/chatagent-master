@@ -18,6 +18,10 @@ class MessageResponse(BaseModel):
     classification: Dict[str, str]
     escalation: bool
     history: List[str] = []
+    mode: Optional[str] = None
+    tools_used: List[str] = []
+    escalation_summary: Optional[str] = None
+    escalation_reason: Optional[str] = None
 
 
 class EscalateRequest(BaseModel):
@@ -29,3 +33,5 @@ class EscalateResponse(BaseModel):
     chat_id: str
     response: str
     history: List[str]
+    escalation_summary: Optional[str] = None
+    escalation_reason: Optional[str] = None

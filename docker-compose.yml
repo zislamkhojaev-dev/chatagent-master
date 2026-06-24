@@ -33,6 +33,7 @@ services:
     volumes:
       - .:/app
       - kb_data:/app/kb
+      - scenarios_data:/app/scenarios
     restart: unless-stopped
 
   qdrant:
@@ -88,6 +89,7 @@ volumes:
   postgres_data:
   redis_data:
   kb_data:
+  scenarios_data:
   qdrant_data:
   chatagent_grafana_data:
   prometheus_data:

@@ -49,8 +49,22 @@ class Settings:
     KB_BACKUP_FILENAME: str = "KB_backup.pdf"
     KB_HASH_FILE: Path = KB_DIR / "kb_hash.json"
 
+    # Agent
+    AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() in ("1", "true", "yes")
+    AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gpt-4.1-mini")
+    AGENT_TEMPERATURE: float = float(os.getenv("AGENT_TEMPERATURE", "0.2"))
+    MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "5"))
+    KB_EMPTY_ESCALATE: bool = os.getenv("KB_EMPTY_ESCALATE", "true").lower() in ("1", "true", "yes")
+    ESCALATION_SUMMARY_MAX_CHARS: int = int(os.getenv("ESCALATION_SUMMARY_MAX_CHARS", "1500"))
+    ESCALATION_SUMMARY_MODEL: str = os.getenv("ESCALATION_SUMMARY_MODEL", "gpt-4o-mini")
+
+    # Scenarios
+    SCENARIOS_DIR: Path = Path(os.getenv("SCENARIOS_DIR", "scenarios"))
+    SCENARIOS_FILE: Path = SCENARIOS_DIR / "scenarios.json"
+    SCENARIOS_BACKUP_FILE: Path = SCENARIOS_DIR / "scenarios_backup.json"
+
     # Константы пайплайна (вынесены в конфиг по Б.8)
-    MAX_HISTORY_SIZE: int = int(os.getenv("MAX_HISTORY_SIZE", "3"))
+    MAX_HISTORY_SIZE: int = int(os.getenv("MAX_HISTORY_SIZE", "10"))
     SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.9"))
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "10"))
     MIN_WAIT: int = int(os.getenv("MIN_WAIT", "1"))

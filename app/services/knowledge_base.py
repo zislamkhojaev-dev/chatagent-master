@@ -5,13 +5,12 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import pdfplumber
 from redis.asyncio import Redis
 
 from app.core.config import settings
-from app.services.chunking import semantic_chunking
 from app.services.embeddings import get_embedding_with_semaphore
 
 logger = logging.getLogger(__name__)
@@ -42,13 +41,17 @@ def _hash_file_path() -> Path:
     return settings.KB_DIR / "kb_hash.json"
 
 
-def save_knowledge_base(chunks: List[str], filename: Optional[Path] = None) -> None:
+def save_knowledge_base(chunks: List[Any], filename: Optional[Path] = None) -> None:
+    """Сохраняет чанки: list[dict] с metadata или list[str] legacy."""
     path = filename or _chunks_filename()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        from app.services.kb_metadata import normalize_chunk_record
+
+        records = [normalize_chunk_record(c) for c in chunks]
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(chunks, f, ensure_ascii=False)
-        logger.info("Knowledge base saved to %s", path)
+            json.dump(records, f, ensure_ascii=False)
+        logger.info("Knowledge base saved to %s (%s chunks)", path, len(records))
     except Exception as e:
         logger.error("Failed to save knowledge base: %s", e)
 
@@ -85,14 +88,18 @@ def load_kb_hash(filename: Optional[Path] = None) -> str:
 
 def load_knowledge_base_chunks(
     filename: Optional[Path] = None,
-) -> Optional[List[str]]:
+) -> Optional[List[dict]]:
+    """Загружает чанки с metadata. Legacy list[str] нормализуется при чтении."""
     path = filename or _chunks_filename()
     try:
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
-                chunks = json.load(f)
-            logger.info("Knowledge base loaded from %s", path)
-            return chunks
+                raw = json.load(f)
+            from app.services.kb_metadata import normalize_chunk_record
+
+            records = [normalize_chunk_record(item) for item in raw]
+            logger.info("Knowledge base loaded from %s (%s chunks)", path, len(records))
+            return records
         return None
     except Exception as e:
         logger.error("Failed to load knowledge base: %s", e)
@@ -116,6 +123,8 @@ async def index_pdf_to_qdrant(
         get_collection_by_alias,
     )
 
+    from app.services.kb_metadata import chunk_text_with_metadata, records_to_texts
+
     path = pdf_path or _kb_path()
     if not path.exists():
         raise FileNotFoundError(f"PDF not found: {path}")
@@ -127,19 +136,32 @@ async def index_pdf_to_qdrant(
         for page in pdf.pages:
             text = page.extract_text() or ""
             full_text += text + "\n"
-    chunks = semantic_chunking(full_text, chunk_max_size=800, overlap=100)
-    logger.info("Created %s chunks for Qdrant", len(chunks))
+    kb_records = chunk_text_with_metadata(full_text, chunk_max_size=800, overlap=100)
+    chunks = records_to_texts(kb_records)
+    logger.info("Created %s chunks with metadata for Qdrant", len(chunks))
     embeddings = await asyncio.gather(
         *(get_embedding_with_semaphore(c, redis_client) for c in chunks)
     )
-    valid = [(i, e, c) for i, (e, c) in enumerate(zip(embeddings, chunks)) if e]
-    if not valid:
+    valid_pairs = [(i, e) for i, (e, _) in enumerate(zip(embeddings, chunks)) if e]
+    if not valid_pairs:
         raise RuntimeError("No embeddings generated")
-    indices, embs, chunks = [x[0] for x in valid], [x[1] for x in valid], [x[2] for x in valid]
+    indices = [p[0] for p in valid_pairs]
+    embs = [p[1] for p in valid_pairs]
+    valid_records = [kb_records[i] for i in indices]
     collection_name = f"{settings.QDRANT_COLLECTION_PREFIX}_{int(time.time())}"
     create_collection(client, collection_name, vector_size=1536)
-    ids = list(range(len(chunks)))  # Qdrant принимает только int (uint64) или UUID
-    payloads = [{"text": c, "id": i} for i, c in enumerate(chunks)]
+    ids = list(range(len(valid_records)))
+    payloads = [
+        {
+            "text": rec["text"],
+            "id": i,
+            "audience": rec.get("audience", "both"),
+            "channel": rec.get("channel", "general"),
+            "topic": rec.get("topic", "general"),
+            "section": rec.get("section", ""),
+        }
+        for i, rec in enumerate(valid_records)
+    ]
     upsert_points(client, collection_name, ids, embs, payloads)
     # Переключить alias: удалить старый, создать новый (всё через REST, без моделей qdrant-client)
     try:
@@ -149,6 +171,6 @@ async def index_pdf_to_qdrant(
     except Exception as e:
         logger.debug("No previous alias or error: %s", e)
     set_alias(client, collection_name, settings.QDRANT_ALIAS)
-    save_knowledge_base(chunks)
+    save_knowledge_base(kb_records)
     save_kb_hash(get_file_hash(str(path)))
-    return chunks, collection_name
+    return kb_records, collection_name
