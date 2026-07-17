@@ -329,13 +329,13 @@ flowchart TD
 |------|----------|
 | `status` | `success` \| `escalation` \| `high_load` |
 | `response` | Текст бота |
-| `classification` | theme, category, subcategory (+ escalation_* при эскалации) |
-| `escalation` | bool |
+| `classification` | theme, category, subcategory (+ escalation_* при эскалации в логе) |
+| `history` | Тексты user-сообщений |
 | `mode` | `answering` \| `clarifying` \| `escalation` |
 | `tools_used` | `["search_knowledge_base", ...]` |
+| `escalation` | bool |
 | `escalation_summary` | Выжимка для оператора |
 | `escalation_reason` | Код причины |
-| `history` | Тексты user-сообщений |
 
 ---
 

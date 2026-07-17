@@ -16,10 +16,10 @@ class MessageResponse(BaseModel):
     chat_id: str
     response: str
     classification: Dict[str, str]
-    escalation: bool
     history: List[str] = []
     mode: Optional[str] = None
     tools_used: List[str] = []
+    escalation: bool
     escalation_summary: Optional[str] = None
     escalation_reason: Optional[str] = None
 

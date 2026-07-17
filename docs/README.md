@@ -7,6 +7,8 @@
 | [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) | Разметка БЗ тегами `[kb ...]`, таксономия, чеклист |
 | [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) | Админка `/admin/kb`, Upload/IndexDB |
 
+Бэклог идей: [`../plans to do.md`](../plans%20to%20do.md)
+
 Кратко по текущему стеку:
 
 1. `POST /process_message` → язык, PII, hard escalation → **один** embedding сообщения.
