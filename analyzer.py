@@ -22,9 +22,8 @@ for var in required_vars:
     if not os.getenv(var):
         raise ValueError(f"Ошибка: переменная окружения {var} не найдена в .env файле.")
 
-# Использование модели gpt-4o-mini, так как gpt-4.1-mini не является стандартным названием
-QC_MODEL = "gpt-4o-mini" 
-CLASSIFICATION_MODEL = "gpt-4o-mini"
+# Использование модели gpt-4o-mini (один вызов: классификация + QC)
+ANALYSIS_MODEL = os.getenv("ANALYZER_MODEL", "gpt-4o-mini")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Имя файла конфигурации
@@ -33,8 +32,8 @@ CONFIG_FILE = "analyzer_config.json"
 ANALYTICS_TABLE = "session_analytics_1"
 
 # Параметры параллельной обработки
-MAX_WORKERS = 10 
-CHUNK_SIZE = 50 # Размер пачки для записи в БД
+MAX_WORKERS = int(os.getenv("ANALYZER_MAX_WORKERS", "10"))
+CHUNK_SIZE = int(os.getenv("ANALYZER_CHUNK_SIZE", "50"))  # Размер пачки для записи в БД
 
 # --- 2. Схемы для анализа ---
 
@@ -131,47 +130,54 @@ WEIGHTS = {
     "K_ПОВ": 2,   # Поведение клиента
     "K_НЕГ": 1    # Негативная лексика
 }
-TOTAL_WEIGHT = sum(WEIGHTS.values()) # 15
+TOTAL_WEIGHT = sum(WEIGHTS.values())  # 15
 
-QC_SYSTEM_INSTRUCTION = f"""
-Ты — эксперт по контролю качества диалогов (Quality Control Analyst). Твоя задача — проанализировать полный диалог между пользователем и чат-ботом и оценить качество ответа бота по 5 заданным критериям.
+# Схема + QC в system: одинаковый префикс → prompt caching на стороне OpenAI.
+# User message — только диалог (без повторной схемы).
+ANALYSIS_SYSTEM_PROMPT = f"""
+Ты — эксперт по анализу клиентских обращений и контролю качества (QC) чат-бота Paynet.
+За один проход по диалогу сделай ДВЕ задачи и верни ОДИН JSON.
 
-**Шкала оценки (для всех критериев):**
-- 3 балла: Высокий уровень (лучший результат)
-- 2 балла: Средний/Нейтральный уровень (приемлемо или нет явной реакции)
-- 1 балл: Низкий уровень (негативный результат, провал)
+══════════════════════════════════════
+ЗАДАЧА 1. КЛАССИФИКАЦИЯ
+══════════════════════════════════════
+Выбери ОДНУ наиболее подходящую Категорию, Подкатегорию и Тематику из схемы ниже.
 
-**КРИТЕРИИ И ЛОГИКА ОЦЕНКИ:**
+**Схема классификации:**
+{CLASSIFICATION_SCHEMA}
 
-1.  **K_РЕЛ (Релевантность ответа)**:
-    - 3: Ответ полностью соответствует запросу клиента.
-    - 2: Ответ частично релевантен, требует уточнений или содержит лишнюю информацию.
-    - 1: Ответ не имеет отношения к вопросу или предоставлена неверная информация.
+══════════════════════════════════════
+ЗАДАЧА 2. QUALITY CONTROL (QC)
+══════════════════════════════════════
+Оцени качество ответов бота по 5 критериям.
 
-2.  **K_ЧП (Четкость и полнота ответов ИИ)**:
-    - 3: Ответ полный, ясный, не требует уточнений.
-    - 2: Информация дана частично, есть недопонимания или недостаточно объяснений.
-    - 1: Ответ неясный, непонятный или отсутствует нужная информация.
+**Шкала (для всех критериев):**
+- 3: высокий уровень
+- 2: средний / нейтральный
+- 1: низкий уровень / провал
 
-3.  **K_ПОВ (Поведение клиента в конце чата)**:
-    - 3: Позитивная/нейтральная реакция (благодарность, «ок»).
-    - 2: Отсутствие реакции (клиент прекратил писать, не попрощавшись).
-    - 1: Негативная реакция (недовольство, раздражение, "зря потратил время").
+1. **K_РЕЛ (Релевантность)**: 3 — полностью по теме; 2 — частично; 1 — не по теме / неверно.
+2. **K_ЧП (Четкость и полнота)**: 3 — полный и ясный; 2 — частично; 1 — неясный / пустой.
+3. **K_ПОВ (Поведение клиента в конце)**: 3 — позитив/нейтрал; 2 — нет реакции; 1 — негатив.
+4. **K_НЕГ (Негативная лексика клиента)**: 3 — нет негатива; 2 — умеренно; 1 — грубость/мат.
+5. **K_ПОВТ (Повторное обращение)**: только 3 (нет признаков) или 1 (явные признаки «уже писал»).
 
-4.  **K_НЕГ (Использование негативной/эмоциональной лексики)**:
-    - 3: Негативная лексика отсутствует.
-    - 2: Умеренное использование негативных слов.
-    - 1: Высокий уровень негатива, грубость, оскорбления, мат.
+══════════════════════════════════════
+ФОРМАТ ОТВЕТА
+══════════════════════════════════════
+Верни СТРОГО один JSON-объект (без markdown и пояснений) с полями:
+{{
+  "Категория": "string",
+  "Подкатегория": "string",
+  "Тематика": "string",
+  "K_РЕЛ": 1|2|3,
+  "K_ЧП": 1|2|3,
+  "K_ПОВ": 1|2|3,
+  "K_НЕГ": 1|2|3,
+  "K_ПОВТ": 1|3
+}}
 
-5.  **K_ПОВТ (Наличие повторного обращения по той же теме)**:
-    - 3: Нет признаков повторного обращения по той же теме (проблема закрыта).
-    - 1: Есть явные признаки повторного обращения ("я уже обращался", "вчера писал то же самое"). (Используй только 1 или 3).
-
-**Твоя задача:**
-1. Оценить диалог по всем 5 критериям (K_РЕЛ, K_ЧП, K_ПОВ, K_НЕГ, K_ПОВТ), присвоив каждому балл от 1 до 3.
-2. Рассчитать Интегральный индекс Q-Bot (Q_BOT_INDEX) по формуле, используя веса.
-
-Верни ответ СТРОГО в формате JSON, содержащий все 5 баллов (как целые числа 1, 2 или 3) и финальный индекс (как число с двумя знаками после запятой).
+Индекс Q-Bot на стороне клиента не нужен — его посчитает код.
 """
 
 # --- 3. Функции для работы с данными ---
@@ -304,136 +310,128 @@ def fetch_new_chat_sessions(conn, start_date: datetime):
         logging.error(f"Ошибка при извлечении новых сессий из БД: {e}")
         return {}
         
+def _clamp_score(value, *, allowed=(1, 2, 3), default=1) -> int:
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return default
+    if score not in allowed:
+        return default
+    return score
+
+
+def _build_qc_from_scores(payload: dict, raw_json: str) -> dict:
+    k_rel = _clamp_score(payload.get("K_РЕЛ"))
+    k_chp = _clamp_score(payload.get("K_ЧП"))
+    k_pov = _clamp_score(payload.get("K_ПОВ"))
+    k_neg = _clamp_score(payload.get("K_НЕГ"))
+    k_povt = _clamp_score(payload.get("K_ПОВТ"), allowed=(1, 3), default=3)
+
+    total_score = (
+        k_rel * WEIGHTS["K_РЕЛ"]
+        + k_povt * WEIGHTS["K_ПОВТ"]
+        + k_chp * WEIGHTS["K_ЧП"]
+        + k_pov * WEIGHTS["K_ПОВ"]
+        + k_neg * WEIGHTS["K_НЕГ"]
+    )
+    return {
+        "Q_BOT_INDEX": round(total_score / TOTAL_WEIGHT, 2),
+        "K_РЕЛ": k_rel,
+        "K_ЧП": k_chp,
+        "K_ПОВ": k_pov,
+        "K_НЕГ": k_neg,
+        "K_ПОВТ": k_povt,
+        "RAW_DATA": raw_json,
+    }
+
+
+def _failed_analysis(error: Exception) -> tuple:
+    classification = {
+        "Категория": "Ошибка OpenAI",
+        "Подкатегория": type(error).__name__,
+        "Тематика": str(error),
+    }
+    qc_result = {
+        "Q_BOT_INDEX": 1.00,
+        "K_РЕЛ": 1,
+        "K_ЧП": 1,
+        "K_ПОВ": 1,
+        "K_НЕГ": 1,
+        "K_ПОВТ": 1,
+        "RAW_DATA": json.dumps({"error": str(error), "note": "analyze_session failed"}, ensure_ascii=False),
+    }
+    return classification, qc_result
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((RateLimitError, APIError))
+    retry=retry_if_exception_type((RateLimitError, APIError)),
+    reraise=True,
 )
-def classify_session_with_openai(full_dialogue: str) -> dict:
-    """Классифицирует сессию по основной схеме."""
-    prompt = f"""
-Ты — эксперт по анализу клиентских обращений. Твоя задача — проанализировать полный диалог между пользователем и чат-ботом и определить основную суть обращения.
-
-Основываясь на всем контексте диалога, выбери ОДНУ наиболее подходящую Категорию, Подкатегорию и Тематику из предоставленной ниже схемы.
-
-**Схема классификации:**
-{CLASSIFICATION_SCHEMA}
-
-**Полный диалог для анализа:**
----
-{full_dialogue}
----
-
-Верни ответ СТРОГО в формате JSON, без каких-либо дополнительных пояснений.
-"""
-    try:
-        response = client.chat.completions.create(
-            model=CLASSIFICATION_MODEL,
-            messages=[
-                {"role": "system", "content": "Ты — точный и внимательный ассистент-аналитик. Твоя задача - классифицировать диалоги."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        logging.error(f"Ошибка API OpenAI при классификации: {e}")
-        return {"Категория": "Ошибка OpenAI", "Подкатегория": str(type(e).__name__), "Тематика": str(e)}
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((RateLimitError, APIError))
-)
-def run_quality_control(full_dialogue: str) -> dict:
+def analyze_session_with_openai(full_dialogue: str) -> tuple:
     """
-    Отправляет полный диалог в OpenAI для оценки по 5 критериям QC и расчета Индекса Q-Bot.
+    Один вызов OpenAI: классификация + QC.
+    Схема и критерии — в system (кэшируемый префикс); в user — только диалог.
     """
     try:
         response = client.chat.completions.create(
-            model=QC_MODEL,
+            model=ANALYSIS_MODEL,
             messages=[
-                {"role": "system", "content": QC_SYSTEM_INSTRUCTION},
-                {"role": "user", "content": f"Диалог для оценки:\n---\n{full_dialogue}\n---"}
+                {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        "Проанализируй диалог: классифицируй обращение и оцени QC.\n"
+                        f"---\n{full_dialogue}\n---"
+                    ),
+                },
             ],
             temperature=0.0,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
-        qc_result_raw = response.choices[0].message.content
-        qc_result = json.loads(qc_result_raw)
+        raw = response.choices[0].message.content or "{}"
+        payload = json.loads(raw)
 
-        # Проверка и расчет Индекса Q-Bot
-        total_score = 0
-        
-        # Получаем оценки как целые числа, используя .get с дефолтом 1 на случай ошибки LLM.
-        k_rel = int(qc_result.get('K_РЕЛ', 1))
-        k_повтор = int(qc_result.get('K_ПОВТ', 1))
-        k_чп = int(qc_result.get('K_ЧП', 1))
-        k_пов = int(qc_result.get('K_ПОВ', 1))
-        k_нег = int(qc_result.get('K_НЕГ', 1))
-        
-        # Присваиваем веса
-        total_score += k_rel * WEIGHTS["K_РЕЛ"]
-        total_score += k_повтор * WEIGHTS["K_ПОВТ"]
-        total_score += k_чп * WEIGHTS["K_ЧП"]
-        total_score += k_пов * WEIGHTS["K_ПОВ"]
-        total_score += k_нег * WEIGHTS["K_НЕГ"]
-
-        q_bot_index = round(total_score / TOTAL_WEIGHT, 2)
-        
-        # Возвращаем полный результат для INSERT в session_analytics
-        return {
-            "Q_BOT_INDEX": q_bot_index,
-            "K_РЕЛ": k_rel,
-            "K_ЧП": k_чп,
-            "K_ПОВ": k_пов,
-            "K_НЕГ": k_нег,
-            "K_ПОВТ": k_повтор,
-            "RAW_DATA": qc_result_raw
+        classification = {
+            "Категория": payload.get("Категория") or "Не определено",
+            "Подкатегория": payload.get("Подкатегория") or "Не определено",
+            "Тематика": payload.get("Тематика") or "Не определено",
         }
-
+        qc_result = _build_qc_from_scores(payload, raw)
+        return classification, qc_result
+    except (RateLimitError, APIError):
+        raise
     except Exception as e:
-        logging.error(f"Критическая ошибка API OpenAI при выполнении QC: {e}")
-        # В случае ошибки присваиваем минимальный индекс для привлечения внимания
-        return {
-            "Q_BOT_INDEX": 1.00, 
-            "K_РЕЛ": 1, "K_ЧП": 1, "K_ПОВ": 1, "K_НЕГ": 1, "K_ПОВТ": 1,
-            "RAW_DATA": json.dumps({"error": str(e), "note": "QC failed"})
-        }
+        logging.error(f"Ошибка API OpenAI при analyze_session: {e}")
+        return _failed_analysis(e)
+
 
 def process_single_session_qc(chat_id, data):
     """
-    Объединяет логику обработки, классификации и QC одной сессии. 
-    Эта функция будет выполняться в потоках.
+    Обработка одной сессии (классификация + QC одним LLM-вызовом).
+    Выполняется в потоках.
     """
-    full_dialogue = "\n---\n".join(data['messages_text'])
-        
-    start_time = data['timestamps'][0]
-    end_time = data['timestamps'][-1]
-    duration = int((end_time - start_time).total_seconds())
-    msg_count = len(data['messages_text']) * 2
-    is_session_escalated = any(data['escalations'])
+    full_dialogue = "\n---\n".join(data["messages_text"])
 
-    # 1. Классификация
-    classification = classify_session_with_openai(full_dialogue)
-    
-    # 2. Quality Control
-    qc_result = run_quality_control(full_dialogue)
-    
-    # Объединяем результаты
-    result = {
-        'chat_id': chat_id,
-        'start_time': start_time,
-        'end_time': end_time,
-        'duration': duration,
-        'msg_count': msg_count,
-        'is_escalated': is_session_escalated,
-        'classification': classification,
-        'qc_result': qc_result
+    start_time = data["timestamps"][0]
+    end_time = data["timestamps"][-1]
+    duration = int((end_time - start_time).total_seconds())
+    msg_count = len(data["messages_text"]) * 2
+    is_session_escalated = any(data["escalations"])
+
+    classification, qc_result = analyze_session_with_openai(full_dialogue)
+
+    return {
+        "chat_id": chat_id,
+        "start_time": start_time,
+        "end_time": end_time,
+        "duration": duration,
+        "msg_count": msg_count,
+        "is_escalated": is_session_escalated,
+        "classification": classification,
+        "qc_result": qc_result,
     }
-    
-    return result
 
 def save_pending_results(conn, results_list):
     """
@@ -512,7 +510,10 @@ def main():
             logging.info("Новых сессий для анализа и QC нет. Работа завершена.")
             return
 
-        logging.info(f"Начало комплексного анализа (Классификация + QC) с {MAX_WORKERS} потоками. Всего новых сессий: {len(sessions_to_process)}")
+        logging.info(
+            f"Начало анализа (classify+QC, 1 LLM/сессия) с {MAX_WORKERS} потоками. "
+            f"Модель={ANALYSIS_MODEL}. Всего новых сессий: {len(sessions_to_process)}"
+        )
         start_time_total = time.time()
         
         results_chunk = []

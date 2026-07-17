@@ -289,7 +289,13 @@ tests/
 
 ## Анализатор сессий (analyzer.py)
 
-Отдельный скрипт для оффлайн-аналитики диалогов: классификация сессий и расчёт Q-Bot Index, запись в таблицу `session_analytics_1`. Конфиг: `analyzer_config.json`. Запуск: `python analyzer.py`. Требуются переменные окружения для БД и OpenAI (см. конфиг и скрипт).
+Отдельный скрипт для оффлайн-аналитики диалогов: **один** вызов LLM на сессию (классификация + QC → JSON), расчёт Q-Bot Index, запись в `session_analytics_1`.
+
+- Конфиг даты: `analyzer_config.json`
+- Модель / параллелизм: `ANALYZER_MODEL`, `ANALYZER_MAX_WORKERS`, `ANALYZER_CHUNK_SIZE`
+- Схема классификации и критерии QC — в **system** prompt (кэшируемый префикс); в user уходит только диалог
+
+Запуск: `python analyzer.py`. Нужны переменные БД (`DB_HOST1` и др.) и `OPENAI_API_KEY`.
 
 ---
 
