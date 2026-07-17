@@ -29,7 +29,7 @@
 
 ## Возможности
 
-- Обработка сообщений: язык (ru/uz), синонимы, классификация, анонимизация PII, hard escalation.
+- Обработка сообщений: язык (ru/uz), синонимы, keyword rudeness-guard (без OpenAI-classify), анонимизация PII, hard escalation.
 - Сценарии из `scenarios/scenarios.json`: уточнения, фильтры KB, hot-reload; редактор `/admin/scenarios`.
 - Hybrid scenario router (`SCENARIO_ROUTER_MODE=hybrid|embedding|substring`).
 - RAG: Qdrant + BM25 + metadata filters по сценарию/слотам.

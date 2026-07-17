@@ -10,13 +10,15 @@ from sklearn.metrics.pairwise import cosine_similarity
 from app.models import MessageRequest, MessageResponse, EscalateRequest, EscalateResponse
 from app.services.agent.orchestrator import AgentContext, run_agent
 from app.services.anonymization import anonymize_message
-from app.services.classification import classify_query
+from app.services.classification import (
+    build_stub_classification,
+    is_rudeness_message,
+)
 from app.services.constants import OPERATOR_KEYWORDS
 from app.services.embeddings import get_embedding
 from app.services.escalation import enrich_classification_for_escalation, perform_escalation
 from app.services.language import detect_language_openai, set_request_language
 from app.services.logging_interaction import log_interaction
-from app.services.scenarios import should_auto_escalate_category
 from app.services.context import schedule_context_update
 from app.services.session import (
     append_assistant_message,
@@ -37,12 +39,6 @@ from app.core.dependencies import get_redis
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _is_rudeness_classification(classification: dict) -> bool:
-    theme = classification.get("theme", "").lower()
-    category = classification.get("category", "").lower()
-    return "хулиганство" in theme or "bezorilik" in theme or "bezorilik" in category
 
 
 @router.post("/process_message", response_model=MessageResponse)
@@ -103,17 +99,23 @@ async def process_message(
             count = 1
         await redis_utils.safe_redis_set(redis_client, f"chat:{chat_id}:embedding", json.dumps(embedding))
 
-        classification = await classify_query(anonymized_message, language, redis_client)
         agent_state = await get_agent_state(redis_client, chat_id)
 
-        # Hard escalation guards
+        # Hard escalation guards (без OpenAI-classify)
         hard_reason = None
         if any(kw in anonymized_message.lower() for kw in OPERATOR_KEYWORDS):
             hard_reason = "user_request"
         elif count >= 3:
             hard_reason = "repeat"
-        elif _is_rudeness_classification(classification) or should_auto_escalate_category(classification):
+        elif is_rudeness_message(anonymized_message, language):
             hard_reason = "rudeness"
+
+        classification = build_stub_classification(
+            language=language,
+            scenario_id=agent_state.get("scenario_id"),
+            hard_reason=hard_reason,
+            record_metric=bool(hard_reason),
+        )
 
         if hard_reason:
             esc = await perform_escalation(
@@ -137,9 +139,10 @@ async def process_message(
                 chat_id=chat_id,
                 response=esc.response,
                 classification=log_class,
-                escalation=esc.escalation,
                 history=history,
                 mode="escalation",
+                tools_used=[],
+                escalation=esc.escalation,
                 escalation_summary=esc.escalation_summary,
                 escalation_reason=esc.escalation_reason,
             )
@@ -163,6 +166,14 @@ async def process_message(
 
         await append_assistant_message(redis_client, chat_id, agent_result.text)
 
+        # Обновить stub после агента: scenario_id / mode / reason эскалации агента
+        agent_state = await get_agent_state(redis_client, chat_id)
+        classification = build_stub_classification(
+            language=language,
+            scenario_id=agent_state.get("scenario_id"),
+            mode=agent_result.mode,
+            hard_reason=agent_result.escalation_reason if agent_result.escalation else None,
+        )
         log_class = enrich_classification_for_escalation(
             classification,
             agent_result.escalation_summary,
@@ -181,10 +192,10 @@ async def process_message(
             chat_id=chat_id,
             response=agent_result.text,
             classification=log_class,
-            escalation=agent_result.escalation,
             history=history,
             mode=agent_result.mode,
             tools_used=agent_result.tools_used,
+            escalation=agent_result.escalation,
             escalation_summary=agent_result.escalation_summary,
             escalation_reason=agent_result.escalation_reason,
         )

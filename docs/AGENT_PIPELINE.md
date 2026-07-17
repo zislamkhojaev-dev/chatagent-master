@@ -17,9 +17,9 @@ flowchart TD
     A[POST /process_message] --> B[Язык + анонимизация]
     B --> C{Только PII?}
     C -->|да| C1[Ответ: без PII]
-    C -->|нет| D[Сессия Redis + классификация]
+    C -->|нет| D[Сессия Redis + keyword guards]
     D --> E{Hard escalation?}
-    E -->|оператор / 3 повтора / хамство| F[Эскалация]
+    E -->|оператор / 3 повтора / keyword rudeness| F[Эскалация]
     E -->|нет| G[run_agent]
     G --> H[resolve_scenario: embedding + substring]
     H --> I[Retrieval-first probe KB]
@@ -48,7 +48,7 @@ flowchart TD
 | Анонимизация | `anonymization.py` | Маскирование PII; пустое сообщение → отказ |
 | Сессия | `session.py` | История в `chat:{id}:messages` (до 10 реплик) |
 | Повторы | `process.py` | Cosine similarity эмбеддингов; `count >= 3` → hard escalation |
-| Классификация | `classification.py` | theme / category / subcategory |
+| Classification stub | `classification.py` | **Без OpenAI**: keyword rudeness + stub (`scenario_id` / mode / reason) |
 | Hard escalation | `process.py` | См. таблицу ниже |
 
 ### Hard escalation (до агента)
@@ -59,8 +59,7 @@ flowchart TD
 |---------|---------------------|
 | Слова: `оператор`, `человек`, `operator`, `inson`, `odam` | `user_request` |
 | 3+ похожих подряд сообщения (`SIMILARITY_THRESHOLD`) | `repeat` |
-| Классификация «Хулиганство / Bezorilik» | `rudeness` |
-| Категория из `auto_escalate_categories` в scenarios.json | `rudeness` |
+| Keyword-guard хамства (`Хулиганство / Bezorilik` в `CATEGORIES`) | `rudeness` |
 
 Ответ: «Передаём оператору...» + `escalation_summary` для оператора.
 
@@ -329,7 +328,7 @@ flowchart TD
 |------|----------|
 | `status` | `success` \| `escalation` \| `high_load` |
 | `response` | Текст бота |
-| `classification` | theme, category, subcategory (+ escalation_* при эскалации в логе) |
+| `classification` | Stub: `theme`≈scenario_id, `category`=`agent`, `subcategory`≈mode/reason; при rudeness — keyword_guard |
 | `history` | Тексты user-сообщений |
 | `mode` | `answering` \| `clarifying` \| `escalation` |
 | `tools_used` | `["search_knowledge_base", ...]` |
