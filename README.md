@@ -2,34 +2,42 @@
 
 Чат-бот колл-центра Paynet на FastAPI: ответы на запросы на **русском** и **узбекском** (латиница) по базе знаний с RAG, детекцией языка, классификацией, анонимизацией PII и эскалацией на оператора.
 
-**Репозиторий:** https://github.com/Zafar1997/OutRAGeiousChat
+**Репозиторий:** [https://github.com/Zafar1997/OutRAGeiousChat](https://github.com/Zafar1997/OutRAGeiousChat)
 
 ---
 
 ## Архитектура
 
-- **API:** FastAPI (модульное приложение в `app/`), точка входа `uvicorn app.main:app`.
-- **RAG:** гибридный поиск — **Qdrant** (векторный) + **BM25** (текстовый), объединение по RRF. Семантический чанкинг PDF, эмбеддинги OpenAI.
-- **Хранение:** PostgreSQL (логи взаимодействий), **Redis** (только ключи: сессии, кэш эмбеддингов/языка/классификации, контекст чата), Qdrant (векторный индекс чанков).
-- **Контекст чата:** сохранённое краткое изложение диалога в Redis, асинхронное обновление после каждого ответа (LLM).
-- **Админка:** веб-страница `/admin/kb` — загрузка PDF в `kb/KB.pdf` и переиндексация БЗ (Basic Auth).
+- **API:** FastAPI (`app/`), точка входа `uvicorn app.main:app`.
+- **Агент:** thinking-agent с сценариями, уточняющими слотами, tool-calling и жёстким KB-guard (без релевантных чанков — уточнение или эскалация, не свободный ответ).
+- **Матчинг сценариев:** hybrid embedding-router (cosine по описаниям сценариев) + substring fallback по `triggers`; эмбеддинг сообщения **переиспользуется** из `/process_message`.
+- **RAG:** гибридный поиск — **Qdrant** + **BM25**, RRF; чанки с метаданными `audience` / `channel` / `topic` (явные теги `[kb ...]` в PDF/TXT).
+- **Хранение:** PostgreSQL (логи), Redis (сессии, кэш, контекст чата, agent_state), Qdrant (векторный индекс).
+- **Админка:** `/admin/kb` (БЗ), `/admin/scenarios` (сценарии) — Basic Auth.
 
-Единственный источник базы знаний — каталог **`kb/`** (файл `kb/KB.pdf`). Индекс строится через админку (загрузка PDF → «Проиндексировать»); при старте приложение подхватывает уже созданный индекс по alias Qdrant и чанки из `kb/knowledge_base.json`.
+Источник БЗ — каталог `**kb/**` (`KB.pdf` или `kb.txt`). Индекс: админка → «Проиндексировать»; при старте подхватывается alias Qdrant и `kb/knowledge_base.json`.
 
-Шаблон переделки БЗ под метаданные поиска: [`docs/KB_RESTRUCTURE_TEMPLATE.md`](docs/KB_RESTRUCTURE_TEMPLATE.md).
 
-Полный пайплайн агента (уточнения, RAG, эскалация, параметры): [`docs/AGENT_PIPELINE.md`](docs/AGENT_PIPELINE.md).
+| Документ                                                             | Содержание                                                      |
+| -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `[docs/AGENT_PIPELINE.md](docs/AGENT_PIPELINE.md)`                   | Пайплайн агента, сценарии, router, RAG, эскалация, env          |
+| `[docs/KB_RESTRUCTURE_TEMPLATE.md](docs/KB_RESTRUCTURE_TEMPLATE.md)` | Разметка БЗ тегами `[kb ...]`, таксономия                       |
+| `[docs/KB_MANAGEMENT_FEATURE.md](docs/KB_MANAGEMENT_FEATURE.md)`     | Админка загрузки/индексации                                     |
+| `[docs/ARCHITECTURE_AND_TZ.md](docs/ARCHITECTURE_AND_TZ.md)`         | Историческое ТЗ (до агента); актуальный код — в документах выше |
+
 
 ---
 
 ## Возможности
 
-- Обработка сообщений: детекция языка (ru/uz), нормализация синонимов, классификация, анонимизация PII.
-- RAG по базе знаний: гибридный поиск (Qdrant + BM25), генерация ответа с учётом контекста чата.
-- Опциональный параметр **`language`** в API: явная установка языка ответа (`"uz"` или `"ru"`) без детекции.
-- Эскалация: автоматическая и ручная (`POST /escalate`).
-- Мониторинг: Prometheus (порт 8001), эндпоинты `/health`, `/stats`.
-- Управление БЗ: страница `/admin/kb` (загрузка PDF, запуск переиндексации), защита Basic Auth.
+- Обработка сообщений: язык (ru/uz), синонимы, классификация, анонимизация PII, hard escalation.
+- Сценарии из `scenarios/scenarios.json`: уточнения, фильтры KB, hot-reload; редактор `/admin/scenarios`.
+- Hybrid scenario router (`SCENARIO_ROUTER_MODE=hybrid|embedding|substring`).
+- RAG: Qdrant + BM25 + metadata filters по сценарию/слотам.
+- Параметр `**language**` в API: `"uz"`  `"ru"` без детекции.
+- Эскалация: hard guards + tool `escalate`; ручная `POST /escalate`.
+- Мониторинг: Prometheus (8001), `/health`, `/stats`.
+- Управление БЗ: `/admin/kb` (PDF → индексация), Basic Auth.
 
 ---
 
@@ -62,7 +70,7 @@ REDIS_DB=0
 PROMETHEUS_PORT=8001
 APP_PORT=8000
 
-# Админка БЗ — обязательно задайте пароль
+# Админка БЗ и сценариев — обязательно задайте пароль
 ADMIN_USER=admin
 ADMIN_PASSWORD=your-secure-password
 KB_MAX_FILE_SIZE_MB=20
@@ -70,6 +78,12 @@ KB_MAX_FILE_SIZE_MB=20
 # Qdrant (имена сервисов из docker-compose)
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
+
+# Агент и матчинг сценариев
+AGENT_ENABLED=true
+AGENT_TEMPERATURE=0.2
+SCENARIO_ROUTER_MODE=hybrid
+SCENARIO_ROUTER_THRESHOLD=0.55
 ```
 
 Без `OPENAI_API_KEY` и `ADMIN_PASSWORD` приложение не запустится или админка будет недоступна.
@@ -103,25 +117,24 @@ docker compose ps
 docker compose logs -f app
 ```
 
-### Шаг 3. Первый запуск: загрузка базы знаний
+### Шаг 3. Первый запуск: база знаний и сценарии
 
-После старта контейнеров RAG не работает, пока не загружен и не проиндексирован PDF.
+После старта RAG не работает, пока не загружен и не проиндексирован источник БЗ.
 
-1. Откройте в браузере: **http://localhost:8000/admin/kb**
-2. Введите логин и пароль из `ADMIN_USER` и `ADMIN_PASSWORD`
-3. Выберите PDF-файл базы знаний (не более 20 МБ) и нажмите **«Загрузить файл»**
-4. После успешной загрузки нажмите **«Проиндексировать базу знаний»** и подтвердите
-5. Дождитесь окончания индексации (30–120 сек в зависимости от размера PDF). После этого бот начнёт отвечать по базе знаний
+1. Откройте **[http://localhost:8000/admin/kb](http://localhost:8000/admin/kb)** (логин/пароль из `ADMIN_`*)
+2. Загрузите PDF (≤ 20 МБ) с разметкой `[kb audience=... channel=... topic=...]` — см. `[docs/KB_RESTRUCTURE_TEMPLATE.md](docs/KB_RESTRUCTURE_TEMPLATE.md)`
+3. Нажмите **«Проиндексировать»** и дождитесь окончания (30–120 сек)
+4. При необходимости отредактируйте сценарии: **[http://localhost:8000/admin/scenarios](http://localhost:8000/admin/scenarios)**
 
-Данные БЗ сохраняются в volume `kb_data`: при перезапуске контейнеров заново загружать PDF не нужно, индекс подхватится при старте.
+Данные БЗ в volume `kb_data`: при перезапуске PDF заново загружать не нужно. Эмбеддинги сценариев пересобираются при старте и после save в админке сценариев.
 
 ### Шаг 4. Проверка работы
 
-- **API и Swagger:** http://localhost:8000 и http://localhost:8000/docs  
-- **Здоровье и БЗ:** http://localhost:8000/health  
-- **Метрики приложения:** http://localhost:8001  
-- **Prometheus:** http://localhost:9090  
-- **Grafana:** http://localhost:3000  
+- **API и Swagger:** [http://localhost:8000](http://localhost:8000) и [http://localhost:8000/docs](http://localhost:8000/docs)  
+- **Админка БЗ:** [http://localhost:8000/admin/kb](http://localhost:8000/admin/kb)  
+- **Админка сценариев:** [http://localhost:8000/admin/scenarios](http://localhost:8000/admin/scenarios)  
+- **Здоровье:** [http://localhost:8000/health](http://localhost:8000/health)  
+- **Метрики:** [http://localhost:8001](http://localhost:8001) · **Prometheus:** [http://localhost:9090](http://localhost:9090) · **Grafana:** [http://localhost:3000](http://localhost:3000)
 
 Пример запроса к боту (после индексации):
 
@@ -155,19 +168,25 @@ docker compose down -v
 
 ## Переменные окружения
 
-| Переменная | Описание | По умолчанию |
-|------------|----------|--------------|
-| `OPENAI_API_KEY` | Ключ OpenAI | — (обязательно) |
-| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL | см. пример выше |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB` | Redis (ключи: сессии, кэш, контекст) | localhost, 6379, 0 |
-| `PROMETHEUS_PORT`, `APP_PORT` | Порты приложения и метрик | 8001, 8000 |
-| `ADMIN_USER`, `ADMIN_PASSWORD` | Basic Auth для `/admin/kb`, `/UploadFile`, `/IndexDB`, `/kb/status` | admin, — (пароль обязателен) |
-| `KB_MAX_FILE_SIZE_MB` | Макс. размер загружаемого PDF (МБ) | 20 |
-| `QDRANT_HOST`, `QDRANT_PORT` | Qdrant (векторный поиск) | localhost, 6333 |
-| `CONTEXT_MAX_CHARS` | Макс. размер контекста чата в символах | 2000 |
-| `MAX_HISTORY_SIZE`, `SIMILARITY_THRESHOLD` | Пайплайн (история, порог повтора) | 3, 0.9 |
 
-Redis в docker-compose запускается с лимитом памяти **512 МБ** и политикой вытеснения `allkeys-lru` (хранение только ключей).
+| Переменная                                                | Описание                                          | По умолчанию                 |
+| --------------------------------------------------------- | ------------------------------------------------- | ---------------------------- |
+| `OPENAI_API_KEY`                                          | Ключ OpenAI                                       | — (обязательно)              |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL                                        | см. пример выше              |
+| `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`                    | Redis (сессии, кэш, контекст, agent_state)        | localhost, 6379, 0           |
+| `PROMETHEUS_PORT`, `APP_PORT`                             | Порты приложения и метрик                         | 8001, 8000                   |
+| `ADMIN_USER`, `ADMIN_PASSWORD`                            | Basic Auth для `/admin/*`, Upload/Index/KB status | admin, — (пароль обязателен) |
+| `KB_MAX_FILE_SIZE_MB`                                     | Макс. размер загружаемого PDF (МБ)                | 20                           |
+| `QDRANT_HOST`, `QDRANT_PORT`                              | Qdrant                                            | localhost, 6333              |
+| `AGENT_ENABLED`                                           | Режим агента (иначе 503 на process)               | true                         |
+| `AGENT_TEMPERATURE`                                       | Temperature LLM агента                            | 0.2                          |
+| `SCENARIO_ROUTER_MODE`                                    | `hybrid` | `embedding` | `substring`              | hybrid                       |
+| `SCENARIO_ROUTER_THRESHOLD`                               | Мин. cosine для embedding-матча сценария          | 0.55                         |
+| `CONTEXT_MAX_CHARS`                                       | Макс. размер контекста чата                       | 2000                         |
+| `MAX_HISTORY_SIZE`, `SIMILARITY_THRESHOLD`                | История / порог повтора → эскалация               | 3, 0.9                       |
+
+
+Полный список параметров агента и RAG — в `[docs/AGENT_PIPELINE.md](docs/AGENT_PIPELINE.md)`. Redis в docker-compose: **512 МБ**, `allkeys-lru`.
 
 ---
 
@@ -182,14 +201,16 @@ Redis в docker-compose запускается с лимитом памяти **
 - **GET `/synonyms/reload`**, **GET `/synonyms/status`** — перезагрузка и состояние словаря синонимов.
 - **GET `/language_detection_stats`**, **POST `/clear_language_cache`** — статистика и очистка кэша детекции языка.
 
-### Админка БЗ (HTTP Basic Auth)
+### Админка (HTTP Basic Auth)
 
-- **GET `/admin/kb`** — веб-страница управления БЗ (загрузка PDF, кнопка переиндексации).
-- **POST `/UploadFile`** — загрузка PDF (form: `file`, `name=KB.pdf`). Валидация: MIME, magic bytes, размер ≤ 20 МБ, читаемость.
-- **POST `/IndexDB`** — переиндексация: PDF → чанки → Qdrant + BM25. При уже идущей индексации — 409.
-- **GET `/kb/status`** — состояние БЗ (файл, даты, index_ready, indexing_in_progress, backup).
+- **GET `/admin/kb`** — загрузка PDF и переиндексация БЗ.
+- **POST `/UploadFile`** — загрузка PDF (`file`, `name=KB.pdf`).
+- **POST `/IndexDB`** — индексация PDF/TXT → чанки с metadata → Qdrant + BM25 (409, если уже идёт).
+- **GET `/kb/status`** — файл, даты, index_ready, indexing_in_progress, backup.
+- **GET `/admin/scenarios`** — редактор сценариев (карточки + JSON).
+- **GET/PUT `/scenarios`**, **POST `/scenarios/reload`** — API сценариев; после save/reload пересобираются embeddings роутера.
 
-Документация API: http://localhost:8000/docs
+Документация API: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
@@ -204,17 +225,15 @@ source venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
-2. Поднимите Redis, PostgreSQL и Qdrant (например, через docker-compose только эти сервисы или локально).
-
-3. Настройте `.env`: укажите `REDIS_HOST`, `DB_HOST`, `QDRANT_HOST` по вашей конфигурации.
-
-4. Запустите приложение:
+1. Поднимите Redis, PostgreSQL и Qdrant (например, через docker-compose только эти сервисы или локально).
+2. Настройте `.env`: укажите `REDIS_HOST`, `DB_HOST`, `QDRANT_HOST` по вашей конфигурации.
+3. Запустите приложение:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-БЗ нужно один раз загрузить и проиндексировать через http://localhost:8000/admin/kb (или положить уже собранные `kb/KB.pdf` и `kb/knowledge_base.json` и выполнить индексацию через админку).
+БЗ нужно один раз загрузить и проиндексировать через [http://localhost:8000/admin/kb](http://localhost:8000/admin/kb) (или положить уже собранные `kb/KB.pdf` и `kb/knowledge_base.json` и выполнить индексацию через админку).
 
 ---
 
@@ -222,49 +241,33 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ```
 app/
-├── main.py              # FastAPI, lifespan, роутеры
-├── core/
-│   ├── config.py       # настройки из env
-│   └── dependencies.py # get_redis, get_openai_client, get_knowledge_base
+├── main.py                 # FastAPI, lifespan (в т.ч. scenario embeddings)
+├── core/config.py          # env, в т.ч. SCENARIO_ROUTER_*
 ├── api/
-│   ├── process.py      # /process_message, /escalate
-│   ├── health.py       # /health, /stats
-│   ├── synonyms.py    # /synonyms/*
-│   ├── language.py    # /language_detection_stats, /clear_language_cache
-│   └── admin.py       # /UploadFile, /IndexDB, /kb/status, /admin/kb
-├── models/
-│   └── schemas.py     # MessageRequest, MessageResponse, EscalateRequest, ...
+│   ├── process.py          # /process_message → run_agent (+ query_embedding)
+│   ├── admin.py            # /admin/kb, Upload, IndexDB
+│   ├── scenarios_admin.py  # API сценариев + rebuild router
+│   └── scenarios_admin_ui.py
 ├── services/
-│   ├── language.py    # детекция языка (OpenAI, кэш)
-│   ├── embeddings.py  # эмбеддинги OpenAI, кэш Redis
-│   ├── knowledge_base.py  # индексация PDF в Qdrant, чанки, kb_hash.json
-│   ├── search.py      # гибридный поиск (Qdrant + BM25, RRF)
-│   ├── bm25_store.py  # BM25-индекс (rank_bm25)
-│   ├── qdrant_store.py # клиент Qdrant, коллекции, alias
-│   ├── classification.py # классификация (правила + OpenAI)
-│   ├── response.py    # генерация ответа (OpenAI), опциональный язык
-│   ├── context.py    # контекст чата: get, асинхронное переписывание
-│   ├── anonymization.py # PII-анонимизация
-│   └── session.py    # сессия в Redis, cleanup_inactive_sessions
-├── utils/
-│   ├── synonyms.py    # загрузка и нормализация синонимов
-│   ├── redis_utils.py # безопасные обёртки Redis
-│   └── metrics.py    # метрики Prometheus
-kb/                     # единственный источник БЗ
-├── KB.pdf
-├── KB_backup.pdf
-├── knowledge_base.json # чанки (после индексации)
-└── kb_hash.json        # upload_date, index_date, pdf_hash
+│   ├── agent/              # orchestrator, kb_guard, prompts, tools
+│   ├── scenario_router.py  # hybrid embedding / substring матчинг
+│   ├── scenarios.py        # загрузка scenarios.json
+│   ├── kb_metadata.py      # [kb] теги, фильтры, evaluate_kb_hits
+│   ├── knowledge_base.py   # индексация PDF/TXT → Qdrant
+│   ├── search.py           # hybrid Qdrant + BM25 (RRF)
+│   ├── embeddings.py       # OpenAI embeddings, кэш Redis
+│   ├── escalation.py       # эскалация + summary
+│   └── session.py          # Redis session / agent_state
+scenarios/scenarios.json    # сценарии агента
+kb/                         # KB.pdf или kb.txt, knowledge_base.json
 docs/
-├── ARCHITECTURE_AND_TZ.md
-└── KB_MANAGEMENT_FEATURE.md
-analyzer.py             # оффлайн-анализатор сессий (QC)
-analyzer_config.json
-synonyms.json
-requirements.txt
-docker-compose.yml
-Dockerfile              # CMD uvicorn app.main:app ...
-.env
+├── AGENT_PIPELINE.md
+├── KB_RESTRUCTURE_TEMPLATE.md
+├── KB_MANAGEMENT_FEATURE.md
+└── ARCHITECTURE_AND_TZ.md  # историческое ТЗ
+tests/
+├── test_scenario_router.py
+└── test_scenarios.py
 ```
 
 ---
@@ -292,11 +295,15 @@ Dockerfile              # CMD uvicorn app.main:app ...
 
 ## Документация
 
-- **Архитектура и ТЗ:** `docs/ARCHITECTURE_AND_TZ.md`
-- **Управление БЗ (админка):** `docs/KB_MANAGEMENT_FEATURE.md`
+Индекс: [`docs/README.md`](docs/README.md)
+
+- **Пайплайн агента (актуально):** [`docs/AGENT_PIPELINE.md`](docs/AGENT_PIPELINE.md)
+- **Разметка БЗ `[kb]`:** [`docs/KB_RESTRUCTURE_TEMPLATE.md`](docs/KB_RESTRUCTURE_TEMPLATE.md)
+- **Админка БЗ:** [`docs/KB_MANAGEMENT_FEATURE.md`](docs/KB_MANAGEMENT_FEATURE.md)
+- **Историческое ТЗ (FAISS → Qdrant):** [`docs/ARCHITECTURE_AND_TZ.md`](docs/ARCHITECTURE_AND_TZ.md)
 
 ---
 
 ## Лицензия
 
-[Укажите лицензию при необходимости]
+MIT

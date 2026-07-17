@@ -1,0 +1,15 @@
+# Документация Paynet RAG Chatbot
+
+| Документ | Назначение |
+|----------|------------|
+| [../README.md](../README.md) | Запуск, env, API, структура репозитория |
+| [AGENT_PIPELINE.md](AGENT_PIPELINE.md) | Пайплайн агента, сценарии, hybrid router, RAG, эскалация |
+| [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) | Разметка БЗ тегами `[kb ...]`, таксономия, чеклист |
+| [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) | Админка `/admin/kb`, Upload/IndexDB |
+| [ARCHITECTURE_AND_TZ.md](ARCHITECTURE_AND_TZ.md) | Историческое ТЗ (FAISS/`bot9b`); не источник истины для текущего кода |
+
+Кратко по текущему стеку:
+
+1. `POST /process_message` → язык, PII, hard escalation → **один** embedding сообщения.
+2. `run_agent` → `resolve_scenario` (hybrid: cosine по описаниям сценариев, иначе triggers) → probe KB → ответ или эскалация.
+3. БЗ индексируется из PDF/TXT с `[kb]`-тегами в Qdrant + BM25.

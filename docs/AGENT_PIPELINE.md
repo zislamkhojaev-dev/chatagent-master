@@ -3,9 +3,11 @@
 Полное описание обработки сообщения в режиме **thinking agent**: предобработка, сценарии, уточнения, гибридный RAG, жёсткие правила ответа и эскалация.
 
 Связанные документы:
-- [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) — структура базы знаний под метаданные
-- [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) — загрузка и переиндексация PDF
-- `scenarios/scenarios.json` — сценарии и уточняющие вопросы
+- [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) — разметка БЗ тегами `[kb ...]`, таксономия
+- [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) — загрузка и переиндексация PDF/TXT
+- [ARCHITECTURE_AND_TZ.md](ARCHITECTURE_AND_TZ.md) — историческое ТЗ (не источник истины для текущего кода)
+- `scenarios/scenarios.json` — сценарии, triggers, `description_ru`/`description_uz`
+- `app/services/scenario_router.py` — hybrid embedding / substring матчинг
 
 ---
 
@@ -20,7 +22,7 @@ flowchart TD
     D --> E{Hard escalation?}
     E -->|оператор / 3 повтора / хамство| F[Эскалация]
     E -->|нет| G[run_agent]
-    G --> H[Матчинг сценария]
+    G --> H[resolve_scenario: embedding + substring]
     H --> I[Retrieval-first probe KB]
     I --> J{Нужно уточнение?}
     J -->|да| K[Уточняющий вопрос]
