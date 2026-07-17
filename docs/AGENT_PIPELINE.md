@@ -63,6 +63,8 @@ flowchart TD
 
 Ответ: «Передаём оператору...» + `escalation_summary` для оператора.
 
+Полная таксономия (Категория / Подкатегория / Тематика Paynet) в online-пайплайне **не** считается — только stub для API/лога. Разметка сессий для аналитики: `analyzer.py`.
+
 ---
 
 ## 3. Этап 2: состояние агента (Redis)
@@ -301,7 +303,7 @@ flowchart TD
 |--------|----------|
 | `user_request` | Hard guard: слова «оператор» |
 | `repeat` | Hard guard: 3 похожих сообщения |
-| `rudeness` | Hard guard / auto_escalate_categories |
+| `rudeness` | Hard guard: keyword из `CATEGORIES` «Хулиганство / Bezorilik» |
 | `no_kb_match` | Пустая или неоднозначная KB |
 | `max_clarifications` | Лимит уточнений |
 | `out_of_scope` | Исчерпаны шаги агента |
@@ -316,7 +318,7 @@ flowchart TD
 
 ### Выжимка для оператора
 
-`build_escalation_summary()` — LLM (`ESCALATION_SUMMARY_MODEL`) по последним сообщениям (до 10), классификации и agent_state. Fallback — шаблон без LLM.
+`build_escalation_summary()` — LLM (`ESCALATION_SUMMARY_MODEL`) по последним сообщениям (до 10), stub-classification и agent_state. Fallback — шаблон без LLM.
 
 ---
 
@@ -395,7 +397,7 @@ flowchart TD
 |------|----------|
 | `scenarios[]` | Список сценариев |
 | `default_max_clarifications` | Глобальный лимит уточнений (2) |
-| `auto_escalate_categories` | Категории для мгновенной эскалации |
+| `auto_escalate_categories` | Legacy-поле; online-эскалация хамства идёт через keyword-guard, не через OpenAI-classify |
 
 Редактирование: `/admin/scenarios` — визуальный редактор (карточки сценариев + вкладка «JSON целиком») или прямое изменение файла.
 
@@ -410,6 +412,7 @@ flowchart TD
 | chunk size / overlap | `knowledge_base.py` | 800 / 100 |
 | `max_tokens` агента | `orchestrator.py` | 600 |
 | `OPERATOR_KEYWORDS` | `constants.py` | оператор, человек, ... |
+| rudeness keywords | `constants.py` → `CATEGORIES` «Хулиганство» | keyword-guard без OpenAI |
 
 ---
 
@@ -454,7 +457,8 @@ flowchart TD
 ## 14. Файловая карта
 
 ```
-app/api/process.py              # HTTP, hard guards, вызов агента
+app/api/process.py              # HTTP, hard guards, stub classification, агент
+app/services/classification.py  # Keyword rudeness + stub (без OpenAI)
 app/services/agent/
   orchestrator.py               # Главный пайплайн
   kb_guard.py                   # probe_has_relevant_context
@@ -468,6 +472,7 @@ app/services/scenarios.py       # Сценарии
 app/services/scenario_router.py # Embedding / hybrid матчинг
 app/services/escalation.py      # Эскалация + выжимка
 app/services/session.py         # Redis state
+analyzer.py                     # Offline: classify + QC → session_analytics_1
 scenarios/scenarios.json        # Конфиг сценариев
 kb/KB.pdf                       # Источник БЗ
 kb/knowledge_base.json          # Чанки с metadata

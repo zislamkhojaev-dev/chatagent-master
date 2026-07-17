@@ -1,6 +1,6 @@
 # Paynet RAG Chatbot
 
-Чат-бот колл-центра Paynet на FastAPI: ответы на запросы на **русском** и **узбекском** (латиница) по базе знаний с RAG, детекцией языка, классификацией, анонимизацией PII и эскалацией на оператора.
+Чат-бот колл-центра Paynet на FastAPI: ответы на запросы на **русском** и **узбекском** (латиница) по базе знаний с RAG, детекцией языка, keyword rudeness-guard, анонимизацией PII и эскалацией на оператора. Полная тематическая классификация сессий — в offline `analyzer.py`.
 
 **Репозиторий:** [https://github.com/Zafar1997/OutRAGeiousChat](https://github.com/Zafar1997/OutRAGeiousChat)
 
@@ -276,7 +276,7 @@ tests/
 - `fastapi`, `uvicorn` — API
 - `qdrant-client` — векторный поиск (Qdrant)
 - `rank_bm25` — BM25 по чанкам
-- `openai` — эмбеддинги, детекция языка, классификация, генерация ответа
+- `openai` — эмбеддинги, детекция языка, ответ агента; offline-классификация сессий — в `analyzer.py`
 - `pdfplumber` — извлечение текста из PDF
 - `asyncpg`, `redis` — PostgreSQL и Redis
 - `prometheus-client` — метрики
