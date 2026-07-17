@@ -44,6 +44,34 @@ def test_chunk_with_kb_tag():
     assert validation.legacy_chunks == 0
 
 
+def test_chunk_with_kb_tag_pdf_glued_blocks():
+    """PDF часто склеивает блоки через '\\n \\n' или вообще без пустых строк."""
+    text = (
+        "[kb audience=client channel=general topic=general] \n \n"
+        "Общая информация о Paynet. "
+        "[kb audience=client channel=mobile_app topic=sms] \n \n"
+        "SMS код не приходит в приложении. "
+        "[kb audience=agent channel=agent topic=qr] "
+        "Cashout QR для агентов."
+    )
+    records, validation = chunk_text_with_metadata(text, chunk_max_size=800, overlap=0)
+    assert validation.tagged_chunks >= 3
+    combos = {(r["audience"], r["channel"], r["topic"]) for r in records}
+    assert ("client", "general", "general") in combos
+    assert ("client", "mobile_app", "sms") in combos
+    assert ("agent", "agent", "qr") in combos
+
+
+def test_coerce_audience_general_to_both():
+    meta = merge_kb_tag_into_meta(
+        {"audience": "both", "channel": "general", "topic": "general"},
+        {"audience": "general", "channel": "infokiosk"},
+        warnings=[],
+    )
+    assert meta["audience"] == "both"
+    assert meta["channel"] == "infokiosk"
+
+
 def test_infer_metadata_agent_section():
     meta = infer_metadata_from_text(
         "Агент не выдал чек после cashout операции.",

@@ -20,6 +20,27 @@ CHANNEL_GENERAL = "general"
 KB_TAG_LINE_RE = re.compile(r"^\[kb\s+([^\]]+)\]\s*$", re.I)
 KB_TAG_PREFIX_RE = re.compile(r"^\[kb\s+([^\]]+)\]\s*\n?", re.I | re.M)
 KB_TAG_INLINE_RE = re.compile(r"\[kb\s+[^\]]+\]\s*", re.I)
+# Разделитель блоков: любой [kb ...] — не зависит от \n\n после PDF-экспорта
+KB_TAG_SPLIT_RE = re.compile(r"\[kb\s+([^\]]+)\]", re.I)
+
+# Частые опечатки в разметке Excel/PDF → значения таксономии
+_AUDIENCE_ALIASES = {
+    "general": AUDIENCE_BOTH,
+    "all": AUDIENCE_BOTH,
+    "клиент": AUDIENCE_CLIENT,
+    "агент": AUDIENCE_AGENT,
+}
+_CHANNEL_ALIASES = {
+    "sms": CHANNEL_MOBILE,
+    "otp": CHANNEL_MOBILE,
+    "mobile": CHANNEL_MOBILE,
+    "app": CHANNEL_MOBILE,
+    "ilova": CHANNEL_MOBILE,
+    "qr": CHANNEL_GENERAL,
+    "refund": CHANNEL_GENERAL,
+    "payment": CHANNEL_GENERAL,
+    "cashout": CHANNEL_AGENT,
+}
 
 
 def default_chunk_metadata(taxonomy: Optional[Taxonomy] = None) -> Dict[str, Any]:
@@ -43,25 +64,91 @@ def parse_kb_tag_attrs(attr_string: str) -> Dict[str, str]:
     return attrs
 
 
+def coerce_kb_tag_attrs(
+    attrs: Dict[str, str],
+    *,
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """Нормализует опечатки в тегах; пустые значения отбрасывает."""
+    out: Dict[str, str] = {}
+    for key, value in attrs.items():
+        if not value:
+            if warnings is not None:
+                warnings.append(f"empty {key} in [kb] tag, skipped")
+            continue
+        if key == "audience" and value in _AUDIENCE_ALIASES:
+            if warnings is not None and value != _AUDIENCE_ALIASES[value]:
+                warnings.append(f"coerced audience '{value}' → '{_AUDIENCE_ALIASES[value]}'")
+            value = _AUDIENCE_ALIASES[value]
+        if key == "channel" and value in _CHANNEL_ALIASES:
+            if warnings is not None:
+                warnings.append(f"coerced channel '{value}' → '{_CHANNEL_ALIASES[value]}'")
+            value = _CHANNEL_ALIASES[value]
+        out[key] = value
+    return out
+
+
 def merge_kb_tag_into_meta(
     meta: Dict[str, Any],
     attrs: Dict[str, str],
     taxonomy: Optional[Taxonomy] = None,
+    *,
+    warnings: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     tax = taxonomy or get_taxonomy()
     out = meta.copy()
+    attrs = coerce_kb_tag_attrs(attrs, warnings=warnings)
     for key in ("audience", "channel", "topic", "section"):
         if key not in attrs:
             continue
         value = attrs[key]
         if key in ("audience", "channel"):
-            validate_taxonomy_field(key, value, context="[kb] tag")
+            if not tax.is_valid(key, value):
+                msg = f"[kb] tag: invalid {key} '{value}' (allowed: {tax.allowed(key)})"
+                if warnings is not None:
+                    warnings.append(msg + " — skipped")
+                    continue
+                validate_taxonomy_field(key, value, context="[kb] tag")
         out[key] = value
     return out
 
 
 def strip_kb_tags(text: str) -> str:
     return KB_TAG_INLINE_RE.sub("", text).strip()
+
+
+def normalize_kb_source_text(text: str) -> str:
+    """
+    Нормализация текста после PDF/Word-экспорта:
+    - единые переводы строк
+    - строки из одних пробелов → настоящие пустые строки
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def split_kb_tagged_blocks(text: str) -> List[Tuple[Dict[str, str], str]]:
+    """
+    Режет документ по каждому [kb ...] независимо от \\n\\n.
+    Возвращает [(attrs, body), ...] — работает и для PDF со «слипшимися» блоками.
+    """
+    text = normalize_kb_source_text(text)
+    matches = list(KB_TAG_SPLIT_RE.finditer(text))
+    if not matches:
+        return []
+
+    blocks: List[Tuple[Dict[str, str], str]] = []
+    for i, match in enumerate(matches):
+        attrs = parse_kb_tag_attrs(match.group(1))
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end].strip()
+        if body:
+            blocks.append((attrs, body))
+    return blocks
 
 
 def infer_metadata_legacy(
@@ -186,69 +273,101 @@ def chunk_text_with_metadata(
 ) -> Tuple[List[Dict[str, Any]], ChunkValidationReport]:
     """
     Семантический чанкинг с явными [kb audience=... channel=... topic=...] тегами.
-    Без тегов — legacy fallback по заголовкам разделов и ключевым словам из taxonomy.json.
+
+    Primary path: режет по каждому [kb ...] (устойчиво к PDF без \\n\\n).
+    Fallback: абзацы / заголовки разделов / legacy-эвристики.
     """
     from app.services.chunking import semantic_chunking
 
     taxonomy = get_taxonomy()
     validation = ChunkValidationReport()
-    current_meta = default_chunk_metadata(taxonomy)
-    current_section = ""
-    blocks: List[Tuple[str, Dict[str, Any], str, str]] = []
-
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    for paragraph in paragraphs:
-        if KB_TAG_LINE_RE.match(paragraph):
-            attrs = parse_kb_tag_attrs(KB_TAG_LINE_RE.match(paragraph).group(1))
-            current_meta = merge_kb_tag_into_meta(current_meta, attrs, taxonomy)
-            continue
-
-        body = paragraph
-        block_meta = current_meta.copy()
-        metadata_source = "section"
-
-        prefix_match = KB_TAG_PREFIX_RE.match(paragraph)
-        if prefix_match:
-            attrs = parse_kb_tag_attrs(prefix_match.group(1))
-            block_meta = merge_kb_tag_into_meta(current_meta.copy(), attrs, taxonomy)
-            body = paragraph[prefix_match.end() :].strip()
-            metadata_source = "tag"
-        elif is_section_header(paragraph, taxonomy):
-            current_section = paragraph.lstrip("#").strip()
-            current_meta = infer_section_meta(current_section, taxonomy)
-            continue
-
-        if not body:
-            continue
-        blocks.append((current_section, block_meta, body, metadata_source))
+    text = normalize_kb_source_text(text)
+    tagged_blocks = split_kb_tagged_blocks(text)
 
     records: List[Dict[str, Any]] = []
-    for section, base_meta, body, metadata_source in blocks:
-        sub_chunks = semantic_chunking(body, chunk_max_size=chunk_max_size, overlap=overlap)
-        for chunk_text in sub_chunks:
-            clean_text = strip_kb_tags(chunk_text)
-            if not clean_text:
-                continue
-            if metadata_source == "tag":
-                meta = {**base_meta, "section": section}
-            else:
-                meta = infer_metadata_legacy(clean_text, section, taxonomy)
-                meta.update(
-                    {
-                        k: base_meta[k]
-                        for k in ("audience", "channel", "topic")
-                        if base_meta.get(k) != default_chunk_metadata(taxonomy).get(k)
-                    }
-                )
-            records.append(
-                finalize_chunk_record(
-                    clean_text,
-                    meta,
-                    metadata_source=metadata_source,
-                    validation=validation,
-                    taxonomy=taxonomy,
-                )
+
+    if tagged_blocks:
+        for attrs, body in tagged_blocks:
+            block_meta = merge_kb_tag_into_meta(
+                default_chunk_metadata(taxonomy),
+                attrs,
+                taxonomy,
+                warnings=validation.warnings,
             )
+            section = block_meta.get("section") or ""
+            for chunk_text in semantic_chunking(body, chunk_max_size=chunk_max_size, overlap=overlap):
+                clean_text = strip_kb_tags(chunk_text)
+                if not clean_text:
+                    continue
+                meta = {**block_meta, "section": section}
+                records.append(
+                    finalize_chunk_record(
+                        clean_text,
+                        meta,
+                        metadata_source="tag",
+                        validation=validation,
+                        taxonomy=taxonomy,
+                    )
+                )
+    else:
+        current_meta = default_chunk_metadata(taxonomy)
+        current_section = ""
+        blocks: List[Tuple[str, Dict[str, Any], str, str]] = []
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        for paragraph in paragraphs:
+            if KB_TAG_LINE_RE.match(paragraph):
+                attrs = parse_kb_tag_attrs(KB_TAG_LINE_RE.match(paragraph).group(1))
+                current_meta = merge_kb_tag_into_meta(
+                    current_meta, attrs, taxonomy, warnings=validation.warnings
+                )
+                continue
+
+            body = paragraph
+            block_meta = current_meta.copy()
+            metadata_source = "section"
+
+            prefix_match = KB_TAG_PREFIX_RE.match(paragraph)
+            if prefix_match:
+                attrs = parse_kb_tag_attrs(prefix_match.group(1))
+                block_meta = merge_kb_tag_into_meta(
+                    current_meta.copy(), attrs, taxonomy, warnings=validation.warnings
+                )
+                body = paragraph[prefix_match.end() :].strip()
+                metadata_source = "tag"
+            elif is_section_header(paragraph, taxonomy):
+                current_section = paragraph.lstrip("#").strip()
+                current_meta = infer_section_meta(current_section, taxonomy)
+                continue
+
+            if not body:
+                continue
+            blocks.append((current_section, block_meta, body, metadata_source))
+
+        for section, base_meta, body, metadata_source in blocks:
+            for chunk_text in semantic_chunking(body, chunk_max_size=chunk_max_size, overlap=overlap):
+                clean_text = strip_kb_tags(chunk_text)
+                if not clean_text:
+                    continue
+                if metadata_source == "tag":
+                    meta = {**base_meta, "section": section}
+                else:
+                    meta = infer_metadata_legacy(clean_text, section, taxonomy)
+                    meta.update(
+                        {
+                            k: base_meta[k]
+                            for k in ("audience", "channel", "topic")
+                            if base_meta.get(k) != default_chunk_metadata(taxonomy).get(k)
+                        }
+                    )
+                records.append(
+                    finalize_chunk_record(
+                        clean_text,
+                        meta,
+                        metadata_source=metadata_source,
+                        validation=validation,
+                        taxonomy=taxonomy,
+                    )
+                )
 
     if not records:
         for chunk_text in semantic_chunking(text, chunk_max_size=chunk_max_size, overlap=overlap):

@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.core.config import settings
-from app.services.knowledge_base import load_kb_hash_data, index_pdf_to_qdrant
+from app.services.knowledge_base import load_kb_hash_data, index_pdf_to_qdrant, resolve_kb_source_path
 from app.services.qdrant_store import get_qdrant_client
 from app.services.bm25_store import build_bm25
 
@@ -75,8 +75,12 @@ async def upload_file(
 @router.post("/IndexDB")
 async def index_db(request: Request, _: None = Depends(verify_admin)):
     global indexing_in_progress
-    if not KB_PATH.exists():
-        raise HTTPException(status_code=404, detail="Файл kb/KB.pdf не найден. Сначала загрузите файл")
+    source = resolve_kb_source_path()
+    if not source.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Файл БЗ не найден (kb/KB.pdf или kb/kb.txt). Сначала загрузите файл",
+        )
     if indexing_in_progress:
         raise HTTPException(status_code=409, detail="Индексация уже выполняется")
     client = get_qdrant_client()
@@ -86,7 +90,7 @@ async def index_db(request: Request, _: None = Depends(verify_admin)):
     try:
         async with INDEX_LOCK:
             redis_client = request.app.state.redis
-            chunks, _, validation = await index_pdf_to_qdrant(redis_client, KB_PATH)
+            chunks, _, validation = await index_pdf_to_qdrant(redis_client, source)
             from app.services.kb_metadata import records_to_texts
 
             request.app.state.knowledge_base = chunks

@@ -41,6 +41,46 @@ def _hash_file_path() -> Path:
     return settings.KB_DIR / "kb_hash.json"
 
 
+def resolve_kb_source_path(explicit: Optional[Path] = None) -> Path:
+    """
+    Источник для индексации:
+    1) явный путь
+    2) kb/KB.pdf
+    3) kb/kb.txt / kb/KB.txt (если PDF нет)
+    """
+    if explicit is not None:
+        return explicit
+    if settings.KB_PATH.exists():
+        return settings.KB_PATH
+    for name in ("kb.txt", "KB.txt"):
+        candidate = settings.KB_DIR / name
+        if candidate.exists():
+            return candidate
+    return settings.KB_PATH
+
+
+def extract_kb_text(path: Path) -> str:
+    """Читает текст БЗ из PDF или TXT (UTF-8)."""
+    suffix = path.suffix.lower()
+    if suffix == ".txt":
+        raw = path.read_bytes()
+        for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1251"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        raise ValueError(f"Cannot decode text KB file: {path}")
+
+    if suffix != ".pdf":
+        raise ValueError(f"Unsupported KB file type: {path.suffix} (use .pdf or .txt)")
+
+    full_text = ""
+    with pdfplumber.open(str(path)) as pdf:
+        for page in pdf.pages:
+            full_text += (page.extract_text() or "") + "\n"
+    return full_text
+
+
 def save_knowledge_base(chunks: List[Any], filename: Optional[Path] = None) -> None:
     """Сохраняет чанки: list[dict] с metadata или list[str] legacy."""
     path = filename or _chunks_filename()
@@ -111,7 +151,7 @@ async def index_pdf_to_qdrant(
     pdf_path: Optional[Path] = None,
 ) -> Tuple[List[dict], str, Any]:
     """
-    Индексирует PDF в Qdrant: чанки → эмбеддинги → коллекция kb_v1_{timestamp} → alias kb_current.
+    Индексирует PDF/TXT в Qdrant: чанки → эмбеддинги → коллекция kb_v1_{timestamp} → alias kb_current.
     Сохраняет чанки в knowledge_base.json. Возвращает (records, collection_name, validation).
     """
     from app.services.qdrant_store import (
@@ -124,22 +164,18 @@ async def index_pdf_to_qdrant(
     )
 
     from app.services.kb_metadata import (
-        ChunkValidationReport,
         chunk_text_with_metadata,
         records_to_texts,
     )
 
-    path = pdf_path or _kb_path()
+    path = resolve_kb_source_path(pdf_path)
     if not path.exists():
-        raise FileNotFoundError(f"PDF not found: {path}")
+        raise FileNotFoundError(f"KB file not found: {path}")
     client = get_qdrant_client()
     if not client:
         raise RuntimeError("Qdrant unavailable")
-    full_text = ""
-    with pdfplumber.open(str(path)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            full_text += text + "\n"
+    full_text = extract_kb_text(path)
+    logger.info("Extracted %s chars from %s", len(full_text), path.name)
     kb_records, validation = chunk_text_with_metadata(full_text, chunk_max_size=800, overlap=100)
     if validation.has_errors():
         raise ValueError(
