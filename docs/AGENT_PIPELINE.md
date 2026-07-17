@@ -5,7 +5,6 @@
 Связанные документы:
 - [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) — разметка БЗ тегами `[kb ...]`, таксономия
 - [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) — загрузка и переиндексация PDF/TXT
-- [ARCHITECTURE_AND_TZ.md](ARCHITECTURE_AND_TZ.md) — историческое ТЗ (не источник истины для текущего кода)
 - `scenarios/scenarios.json` — сценарии, triggers, `description_ru`/`description_uz`
 - `app/services/scenario_router.py` — hybrid embedding / substring матчинг
 

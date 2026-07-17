@@ -20,10 +20,9 @@
 
 | Документ                                                             | Содержание                                                      |
 | -------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `[docs/AGENT_PIPELINE.md](docs/AGENT_PIPELINE.md)`                   | Пайплайн агента, сценарии, router, RAG, эскалация, env          |
-| `[docs/KB_RESTRUCTURE_TEMPLATE.md](docs/KB_RESTRUCTURE_TEMPLATE.md)` | Разметка БЗ тегами `[kb ...]`, таксономия                       |
-| `[docs/KB_MANAGEMENT_FEATURE.md](docs/KB_MANAGEMENT_FEATURE.md)`     | Админка загрузки/индексации                                     |
-| `[docs/ARCHITECTURE_AND_TZ.md](docs/ARCHITECTURE_AND_TZ.md)`         | Историческое ТЗ (до агента); актуальный код — в документах выше |
+| [`docs/AGENT_PIPELINE.md`](docs/AGENT_PIPELINE.md)                   | Пайплайн агента, сценарии, router, RAG, эскалация, env          |
+| [`docs/KB_RESTRUCTURE_TEMPLATE.md`](docs/KB_RESTRUCTURE_TEMPLATE.md) | Разметка БЗ тегами `[kb ...]`, таксономия                       |
+| [`docs/KB_MANAGEMENT_FEATURE.md`](docs/KB_MANAGEMENT_FEATURE.md)     | Админка загрузки/индексации                                     |
 
 
 ---
@@ -261,10 +260,10 @@ app/
 scenarios/scenarios.json    # сценарии агента
 kb/                         # KB.pdf или kb.txt, knowledge_base.json
 docs/
+├── README.md
 ├── AGENT_PIPELINE.md
 ├── KB_RESTRUCTURE_TEMPLATE.md
-├── KB_MANAGEMENT_FEATURE.md
-└── ARCHITECTURE_AND_TZ.md  # историческое ТЗ
+└── KB_MANAGEMENT_FEATURE.md
 tests/
 ├── test_scenario_router.py
 └── test_scenarios.py
@@ -306,7 +305,6 @@ tests/
 - **Пайплайн агента (актуально):** [`docs/AGENT_PIPELINE.md`](docs/AGENT_PIPELINE.md)
 - **Разметка БЗ `[kb]`:** [`docs/KB_RESTRUCTURE_TEMPLATE.md`](docs/KB_RESTRUCTURE_TEMPLATE.md)
 - **Админка БЗ:** [`docs/KB_MANAGEMENT_FEATURE.md`](docs/KB_MANAGEMENT_FEATURE.md)
-- **Историческое ТЗ (FAISS → Qdrant):** [`docs/ARCHITECTURE_AND_TZ.md`](docs/ARCHITECTURE_AND_TZ.md)
 
 ---
 

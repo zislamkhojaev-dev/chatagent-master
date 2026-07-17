@@ -6,7 +6,6 @@
 | [AGENT_PIPELINE.md](AGENT_PIPELINE.md) | Пайплайн агента, сценарии, hybrid router, RAG, эскалация |
 | [KB_RESTRUCTURE_TEMPLATE.md](KB_RESTRUCTURE_TEMPLATE.md) | Разметка БЗ тегами `[kb ...]`, таксономия, чеклист |
 | [KB_MANAGEMENT_FEATURE.md](KB_MANAGEMENT_FEATURE.md) | Админка `/admin/kb`, Upload/IndexDB |
-| [ARCHITECTURE_AND_TZ.md](ARCHITECTURE_AND_TZ.md) | Историческое ТЗ (FAISS/`bot9b`); не источник истины для текущего кода |
 
 Кратко по текущему стеку:
 
