@@ -99,7 +99,15 @@ flowchart TD
 
 ### Матчинг
 
-`match_scenario(message)` — первый enabled-сценарий, чей `trigger` содержится в тексте (case-insensitive).
+`resolve_scenario(message, language, query_embedding=...)` (`app/services/scenario_router.py`):
+
+| Режим `SCENARIO_ROUTER_MODE` | Поведение |
+|------------------------------|-----------|
+| `hybrid` (default) | Cosine(query_emb, scenario_emb) ≥ `SCENARIO_ROUTER_THRESHOLD` → сценарий; иначе substring по `triggers` |
+| `embedding` | Только embedding; при score &lt; threshold — без сценария (кроме отсутствия эмбеддинга → substring) |
+| `substring` | Как раньше: первый enabled-сценарий, чей `trigger` в тексте |
+
+Эмбеддинг сообщения **переиспользуется** из `/process_message` (тот же вектор, что и для RAG). Индекс сценариев строится при старте и после save в `/admin/scenarios` из `description_ru` + `description_uz` + triggers + search_hint.
 
 После матча `scenario_id` **закрепляется** в сессии до её сброса (эскалация / таймаут 1 ч).
 
@@ -108,7 +116,8 @@ flowchart TD
 | Поле | Описание |
 |------|----------|
 | `id` | Уникальный идентификатор |
-| `triggers` | Ключевые фразы для матча |
+| `triggers` | Ключевые фразы для substring fallback |
+| `description_ru` / `description_uz` | Текст для embedding-router |
 | `clarify_policy` | `never` \| `if_ambiguous` \| `always` |
 | `required_slots` | Слоты с вопросами RU/UZ |
 | `search_hint` | Шаблон запроса в KB (`QR {user_type}`) |
@@ -377,6 +386,8 @@ flowchart TD
 |------------|---------|----------|
 | `KB_DIR` | `kb` | Каталог БЗ |
 | `SCENARIOS_DIR` | `scenarios` | Каталог сценариев |
+| `SCENARIO_ROUTER_MODE` | `hybrid` | `hybrid` \| `embedding` \| `substring` |
+| `SCENARIO_ROUTER_THRESHOLD` | `0.55` | Мин. cosine для embedding-матча |
 
 ### scenarios.json (без перезапуска — hot reload по mtime)
 
@@ -454,6 +465,7 @@ app/services/agent/
 app/services/search.py          # Hybrid Qdrant + BM25
 app/services/kb_metadata.py     # Metadata, filters, evaluate_kb_hits
 app/services/scenarios.py       # Сценарии
+app/services/scenario_router.py # Embedding / hybrid матчинг
 app/services/escalation.py      # Эскалация + выжимка
 app/services/session.py         # Redis state
 scenarios/scenarios.json        # Конфиг сценариев

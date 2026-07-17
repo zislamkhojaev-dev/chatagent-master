@@ -55,6 +55,9 @@ class Settings:
     AGENT_TEMPERATURE: float = float(os.getenv("AGENT_TEMPERATURE", "0.2"))
     MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "5"))
     KB_EMPTY_ESCALATE: bool = os.getenv("KB_EMPTY_ESCALATE", "true").lower() in ("1", "true", "yes")
+    # Scenario router: substring | embedding | hybrid (embedding + substring fallback)
+    SCENARIO_ROUTER_MODE: str = os.getenv("SCENARIO_ROUTER_MODE", "hybrid")
+    SCENARIO_ROUTER_THRESHOLD: float = float(os.getenv("SCENARIO_ROUTER_THRESHOLD", "0.55"))
     ESCALATION_SUMMARY_MAX_CHARS: int = int(os.getenv("ESCALATION_SUMMARY_MAX_CHARS", "1500"))
     ESCALATION_SUMMARY_MODEL: str = os.getenv("ESCALATION_SUMMARY_MODEL", "gpt-4o-mini")
 

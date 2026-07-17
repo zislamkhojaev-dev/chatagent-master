@@ -205,6 +205,8 @@ def get_admin_scenarios_html() -> str:
         topic: null,
         required_slots: [],
         search_hint: '',
+        description_ru: '',
+        description_uz: '',
         max_clarifications: null,
       };
     }
@@ -264,6 +266,10 @@ def get_admin_scenarios_html() -> str:
         '<div class="field"><label>topic</label><input class="f-topic" list="topic-hints" value="' + esc(s.topic || '') + '" placeholder="qr, payment, cashout…"></div>' +
         '<div class="field"><label>max_clarifications</label><input type="number" class="f-maxclar" min="0" placeholder="глобальный" value="' + (s.max_clarifications != null ? s.max_clarifications : '') + '"></div>' +
         '<div class="field field-full"><label>search_hint</label><input class="f-hint" value="' + esc(s.search_hint) + '" placeholder="QR {user_type}"></div>' +
+        '<div class="field field-full"><label>description_ru (для embedding-router)</label>' +
+        '<textarea class="f-desc-ru" rows="2">' + esc(s.description_ru || '') + '</textarea></div>' +
+        '<div class="field field-full"><label>description_uz (для embedding-router)</label>' +
+        '<textarea class="f-desc-uz" rows="2">' + esc(s.description_uz || '') + '</textarea></div>' +
         '<div class="field field-full"><label>triggers (по одному на строку)</label>' +
         '<textarea class="f-triggers mono" rows="4">' + esc(listToLines(s.triggers)) + '</textarea></div>' +
         '</div>' +
@@ -369,6 +375,8 @@ def get_admin_scenarios_html() -> str:
         const mc = card.querySelector('.f-maxclar').value;
         s.max_clarifications = mc === '' ? null : parseInt(mc, 10);
         s.search_hint = card.querySelector('.f-hint').value.trim();
+        s.description_ru = card.querySelector('.f-desc-ru').value.trim();
+        s.description_uz = card.querySelector('.f-desc-uz').value.trim();
         s.triggers = linesToList(card.querySelector('.f-triggers').value);
         if (!s.triggers.length) s.triggers = ['trigger'];
 

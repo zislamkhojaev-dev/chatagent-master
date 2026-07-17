@@ -158,6 +158,7 @@ async def process_message(
             classification=classification,
             app_state=req.app.state,
             redis_client=redis_client,
+            query_embedding=embedding,
         ))
 
         await append_assistant_message(redis_client, chat_id, agent_result.text)

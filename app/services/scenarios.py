@@ -28,6 +28,8 @@ class Scenario(BaseModel):
     triggers: List[str] = Field(min_length=1)
     required_slots: List[ScenarioSlot] = Field(default_factory=list)
     search_hint: str = ""
+    description_ru: str = ""
+    description_uz: str = ""
     max_clarifications: Optional[int] = None
     clarify_policy: str = "if_ambiguous"  # never | if_ambiguous | always
     default_audience: str = "client"  # client | agent | both
@@ -111,7 +113,8 @@ def save_scenarios(data: dict) -> ScenariosConfig:
     return reload_scenarios()
 
 
-def match_scenario(query: str, language: str = "ru") -> Optional[Scenario]:
+def match_scenario_substring(query: str, language: str = "ru") -> Optional[Scenario]:
+    """Legacy: первый enabled-сценарий, чей trigger содержится в тексте."""
     config = get_scenarios_config()
     query_lower = query.lower()
     for scenario in config.scenarios:
@@ -121,6 +124,11 @@ def match_scenario(query: str, language: str = "ru") -> Optional[Scenario]:
             if trigger.lower() in query_lower:
                 return scenario
     return None
+
+
+def match_scenario(query: str, language: str = "ru") -> Optional[Scenario]:
+    """Обратная совместимость: substring-матч (без embedding)."""
+    return match_scenario_substring(query, language)
 
 
 def get_missing_slots(scenario: Scenario, agent_state: dict) -> List[ScenarioSlot]:

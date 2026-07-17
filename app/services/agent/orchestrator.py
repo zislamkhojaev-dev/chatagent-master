@@ -31,8 +31,8 @@ from app.services.scenarios import (
     get_missing_slots,
     get_slot_question,
     get_scenarios_config,
-    match_scenario,
 )
+from app.services.scenario_router import resolve_scenario
 from app.services.session import get_agent_state, save_agent_state
 from app.utils.metrics import AGENT_CLARIFICATIONS, AGENT_STEPS, AGENT_TOOL_CALLS
 
@@ -50,6 +50,7 @@ class AgentContext:
     classification: Dict[str, str]
     app_state: Any
     redis_client: Redis
+    query_embedding: Optional[List[float]] = None
 
 
 @dataclass
@@ -210,16 +211,25 @@ def _should_clarify(
 async def run_agent(ctx: AgentContext) -> AgentResult:
     config = get_scenarios_config()
     agent_state = await get_agent_state(ctx.redis_client, ctx.chat_id)
-    scenario = match_scenario(ctx.message, ctx.language)
     scenario_just_matched = False
-    if scenario and not agent_state.get("scenario_id"):
-        agent_state["scenario_id"] = scenario.id
-        scenario_just_matched = True
-    elif agent_state.get("scenario_id"):
+    scenario = None
+    locked_id = agent_state.get("scenario_id")
+    if locked_id:
         for s in config.scenarios:
-            if s.id == agent_state["scenario_id"]:
+            if s.id == locked_id:
                 scenario = s
                 break
+    else:
+        # reuse message embedding from process.py — no second OpenAI call
+        scenario = await resolve_scenario(
+            ctx.message,
+            ctx.language,
+            query_embedding=ctx.query_embedding,
+            redis_client=ctx.redis_client,
+        )
+        if scenario:
+            agent_state["scenario_id"] = scenario.id
+            scenario_just_matched = True
 
     if scenario and not scenario_just_matched and get_missing_slots(scenario, agent_state):
         agent_state = _update_slots_from_message(scenario, agent_state, ctx.message)

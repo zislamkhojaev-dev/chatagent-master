@@ -106,6 +106,14 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cleanup_inactive_sessions(redis_client))
     logger.info("Session cleanup task started")
 
+    try:
+        from app.services.scenario_router import rebuild_scenario_embeddings
+
+        n = await rebuild_scenario_embeddings(redis_client)
+        logger.info("Scenario embedding router ready (%s vectors)", n)
+    except Exception as e:
+        logger.warning("Scenario embedding router not ready: %s", e)
+
     app.state.redis = redis_client
     app.state.db_pool = db_pool
     app.state.knowledge_base = knowledge_base
