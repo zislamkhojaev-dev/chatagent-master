@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
 from app.services.kb_metadata import (
     KbSearchEvaluation,
     MetadataFilter,
@@ -84,7 +85,7 @@ def _hybrid_search_sync(
             hits.append((idx, score, meta))
             result_chunks.append(kb_records[idx]["text"])
 
-    evaluation = evaluate_kb_hits(hits)
+    evaluation = evaluate_kb_hits(hits, min_rrf_score=settings.MIN_RRF_SCORE)
     return HybridSearchResult(
         chunks=result_chunks,
         hits=hits,
@@ -178,7 +179,7 @@ async def hybrid_search(
             result_chunks.append(kb_records[idx]["text"])
             if len(result_chunks) >= top_k:
                 break
-        evaluation = evaluate_kb_hits(hits)
+        evaluation = evaluate_kb_hits(hits, min_rrf_score=settings.MIN_RRF_SCORE)
         return HybridSearchResult(result_chunks, hits, evaluation, metadata_filter)
 
     return HybridSearchResult([], [], KbSearchEvaluation(is_empty=True))

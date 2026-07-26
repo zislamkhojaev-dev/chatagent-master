@@ -28,6 +28,7 @@ from app.services.kb_metadata import MetadataFilter, build_metadata_filter
 from app.services.scenarios import (
     Scenario,
     build_search_query,
+    extract_slot_value,
     get_missing_slots,
     get_slot_question,
     get_scenarios_config,
@@ -76,17 +77,40 @@ def _apply_uz_postprocess(text: str) -> str:
 
 
 def _update_slots_from_message(scenario: Optional[Scenario], agent_state: dict, message: str) -> dict:
+    """Заполняет первый missing-слот только при распознанном значении."""
     if not scenario:
         return agent_state
     missing = get_missing_slots(scenario, agent_state)
     if not missing:
         return agent_state
-    slots = dict(agent_state.get("slots") or {})
-    slots[missing[0].id] = message.strip()
+
+    slot = missing[0]
+    value = extract_slot_value(slot.id, message)
     agent_state = dict(agent_state)
-    agent_state["slots"] = slots
-    agent_state["clarification_count"] = int(agent_state.get("clarification_count") or 0) + 1
+    awaiting = agent_state.get("awaiting_slot")
+
+    if value:
+        slots = dict(agent_state.get("slots") or {})
+        slots[slot.id] = value
+        agent_state["slots"] = slots
+        agent_state.pop("awaiting_slot", None)
+        if awaiting:
+            agent_state["clarification_count"] = int(agent_state.get("clarification_count") or 0) + 1
+        return agent_state
+
+    # Ждали ответ на уточнение, но значение не распарсили
+    if awaiting == slot.id:
+        agent_state["clarification_count"] = int(agent_state.get("clarification_count") or 0) + 1
     return agent_state
+
+
+def _reset_scenario_state(agent_state: dict, scenario_id: str) -> dict:
+    state = dict(agent_state)
+    state["scenario_id"] = scenario_id
+    state["slots"] = {}
+    state["clarification_count"] = 0
+    state.pop("awaiting_slot", None)
+    return state
 
 
 def _detect_mode(text: str, tools_used: List[str], escalation: bool, clarified: bool = False) -> str:
@@ -144,6 +168,8 @@ async def _probe_kb(
         scenario=scenario,
         slots=slots,
         metadata_filter=metadata_filter,
+        query_embedding=ctx.query_embedding,
+        original_message=ctx.message,
     )
 
 
@@ -165,7 +191,6 @@ async def _retrieval_first_probe(
     if result.get("is_ambiguous"):
         return result, "ambiguous"
 
-    # Расширить поиск — без фильтра audience
     broad_filter = MetadataFilter(
         channels=default_filter.channels,
         topics=default_filter.topics,
@@ -176,7 +201,6 @@ async def _retrieval_first_probe(
     if result_broad.get("is_ambiguous"):
         return result_broad, "ambiguous"
 
-    # Полностью без фильтра
     result_all = await _probe_kb(ctx, scenario, agent_state, MetadataFilter())
     if result_all.get("has_relevant_context"):
         return result_all, "sufficient"
@@ -192,15 +216,15 @@ def _should_clarify(
 ) -> bool:
     if not scenario or not scenario.required_slots:
         return False
+    if not get_missing_slots(scenario, agent_state):
+        return False
     policy = getattr(scenario, "clarify_policy", "if_ambiguous") or "if_ambiguous"
     if policy == "never":
         return False
     if policy == "always":
-        return bool(get_missing_slots(scenario, agent_state))
-    # if_ambiguous
-    if probe_status not in ("ambiguous", "insufficient"):
-        return False
-    return bool(get_missing_slots(scenario, agent_state))
+        return True
+    # if_ambiguous: уточнять при ambiguous / insufficient (не при уже достаточном probe)
+    return probe_status in ("ambiguous", "insufficient")
 
 
 @retry(
@@ -214,30 +238,41 @@ async def run_agent(ctx: AgentContext) -> AgentResult:
     scenario_just_matched = False
     scenario = None
     locked_id = agent_state.get("scenario_id")
-    if locked_id:
-        for s in config.scenarios:
-            if s.id == locked_id:
-                scenario = s
-                break
-    else:
-        # reuse message embedding from process.py — no second OpenAI call
-        scenario = await resolve_scenario(
-            ctx.message,
-            ctx.language,
-            query_embedding=ctx.query_embedding,
-            redis_client=ctx.redis_client,
-        )
-        if scenario:
-            agent_state["scenario_id"] = scenario.id
-            scenario_just_matched = True
 
-    if scenario and not scenario_just_matched and get_missing_slots(scenario, agent_state):
+    resolved = await resolve_scenario(
+        ctx.message,
+        ctx.language,
+        query_embedding=ctx.query_embedding,
+        redis_client=ctx.redis_client,
+    )
+
+    if locked_id:
+        locked_scenario = next((s for s in config.scenarios if s.id == locked_id), None)
+        if resolved and resolved.id != locked_id:
+            # Смена темы: уверенный новый матч → unlock
+            logger.info(
+                "Scenario unlock chat_id=%s %s -> %s",
+                ctx.chat_id,
+                locked_id,
+                resolved.id,
+            )
+            agent_state = _reset_scenario_state(agent_state, resolved.id)
+            scenario = resolved
+            scenario_just_matched = True
+        else:
+            scenario = locked_scenario
+    elif resolved:
+        agent_state = _reset_scenario_state(agent_state, resolved.id)
+        scenario = resolved
+        scenario_just_matched = True
+
+    # Парсим слоты с первого и последующих сообщений (в т.ч. «я агент» в том же ходе)
+    if scenario and get_missing_slots(scenario, agent_state):
         agent_state = _update_slots_from_message(scenario, agent_state, ctx.message)
 
     tools_used: List[str] = []
     total_tokens = 0
 
-    # Retrieval-first: пробуем KB до уточняющих вопросов
     probe_result, probe_status = await _retrieval_first_probe(ctx, scenario, agent_state)
 
     if _should_clarify(scenario, agent_state, probe_status):
@@ -250,6 +285,7 @@ async def run_agent(ctx: AgentContext) -> AgentResult:
         missing = get_missing_slots(scenario, agent_state)
         if missing:
             question = get_slot_question(missing[0], ctx.language)
+            agent_state["awaiting_slot"] = missing[0].id
             await save_agent_state(ctx.redis_client, ctx.chat_id, agent_state)
             AGENT_CLARIFICATIONS.inc()
             return AgentResult(
@@ -258,7 +294,6 @@ async def run_agent(ctx: AgentContext) -> AgentResult:
                 tools_used=tools_used,
             )
 
-    # Жёсткое правило: без has_relevant_context — только эскалация (уточнения уже обработаны выше)
     if not probe_has_relevant_context(probe_status):
         logger.info(
             "KB probe insufficient for chat_id=%s status=%s — escalating",
@@ -268,7 +303,14 @@ async def run_agent(ctx: AgentContext) -> AgentResult:
         return await _return_escalation(ctx, agent_state, "no_kb_match", tools_used)
 
     chat_context = await get_chat_context(ctx.redis_client, ctx.chat_id)
-    system_prompt = build_system_prompt(ctx.language, scenario, agent_state, chat_context)
+    # Answering with KB: do not inject contradicting «обязательно уточни»
+    system_prompt = build_system_prompt(
+        ctx.language,
+        scenario,
+        agent_state,
+        chat_context,
+        kb_answer_mode=True,
+    )
 
     kb_block = format_kb_result_for_llm(probe_result)
     system_prompt += (
@@ -319,6 +361,8 @@ async def run_agent(ctx: AgentContext) -> AgentResult:
                         scenario=scenario,
                         slots=agent_state.get("slots") or {},
                         metadata_filter=filt,
+                        query_embedding=ctx.query_embedding,
+                        original_message=ctx.message,
                     )
                     if not kb_result.get("has_relevant_context"):
                         logger.info(

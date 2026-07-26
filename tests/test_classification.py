@@ -9,7 +9,11 @@ from app.services.classification import (
 def test_is_rudeness_message_keywords():
     assert is_rudeness_message("это хулиганство", "ru")
     assert is_rudeness_message("bezorilik qilyapti", "uz")
+    assert is_rudeness_message("мат в чате", "ru")
     assert not is_rudeness_message("как оплатить по QR", "ru")
+    # substring «мат» внутри «банкомат» не должен эскалировать
+    assert not is_rudeness_message("как оплатить через банкомат", "ru")
+    assert not is_rudeness_message("терминал автомат не работает", "ru")
 
 
 def test_stub_rudeness():

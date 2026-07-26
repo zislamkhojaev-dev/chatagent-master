@@ -59,7 +59,12 @@ CATEGORIES = {
     },
     "Хулиганство / Bezorilik": {
         "Хулиганство / Bezorilik": [
+            # short tokens matched with word-boundaries (avoid банкомат → мат)
             "мат",
+            "сука",
+            "бля",
+            "fuck",
+            "shit",
             "bo'ralab so'kinish",
             "хулиганство",
             "bezorilik",

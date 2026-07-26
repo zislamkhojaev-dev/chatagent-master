@@ -15,3 +15,4 @@
 - Порог «пустого RAG» → clarify / escalate (`kb_guard`)
 - Hybrid embedding scenario router
 - Убран OpenAI-classify из `/process_message`; keyword rudeness + stub classification (полная таксономия в analyzer)
+- Critical fixes: word-boundary rudeness, clear count/embedding on escalate, slot parse + scenario unlock, MIN_RRF_SCORE, reuse query_embedding, kb_answer_mode prompt

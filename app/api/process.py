@@ -56,15 +56,17 @@ async def process_message(
             raise HTTPException(status_code=400, detail="Missing chat_id or message")
 
         if request.language in ("uz", "ru"):
+            # Явный language с клиента — без OpenAI language detection
             set_request_language(request.language)
             language = request.language
             is_uncertain = False
+            logger.info("Using client-provided language: %s", language)
         else:
             language, is_uncertain = await detect_language_openai(
                 message, chat_id, redis_client
             )
+            logger.info("Language detected: %s, is_uncertain: %s", language, is_uncertain)
         await redis_utils.safe_redis_set(redis_client, f"chat:{chat_id}:last_language", language)
-        logger.info("Language: %s, is_uncertain: %s", language, is_uncertain)
 
         anonymized_message = anonymize_message(message)
         is_pii_only = not anonymized_message.strip() or anonymized_message.strip() in ("***", "")

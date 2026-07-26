@@ -592,10 +592,12 @@ def to_qdrant_filter(filt: Optional[MetadataFilter]) -> Optional[Any]:
             )
         )
     if filt.topics:
+        # align with chunk_matches_filter: topic=general always allowed
+        topic_values = list(set(filt.topics) | {"general"})
         must.append(
             qmodels.FieldCondition(
                 key="topic",
-                match=qmodels.MatchAny(any=filt.topics),
+                match=qmodels.MatchAny(any=topic_values),
             )
         )
     if not must:

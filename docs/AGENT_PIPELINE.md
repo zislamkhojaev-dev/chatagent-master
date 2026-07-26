@@ -44,7 +44,7 @@ flowchart TD
 | Шаг | Модуль | Описание |
 |-----|--------|----------|
 | Валидация | `process.py` | `chat_id` и `message` обязательны |
-| Язык | `language.py` | Явный `language: uz\|ru` или детекция OpenAI |
+| Язык | `language.py` | **Предпочтительно** явный `language: "uz"\|"ru"` в теле (без LLM); иначе детекция OpenAI |
 | Анонимизация | `anonymization.py` | Маскирование PII; пустое сообщение → отказ |
 | Сессия | `session.py` | История в `chat:{id}:messages` (до 10 реплик) |
 | Повторы | `process.py` | Cosine similarity эмбеддингов; `count >= 3` → hard escalation |
@@ -59,7 +59,7 @@ flowchart TD
 |---------|---------------------|
 | Слова: `оператор`, `человек`, `operator`, `inson`, `odam` | `user_request` |
 | 3+ похожих подряд сообщения (`SIMILARITY_THRESHOLD`) | `repeat` |
-| Keyword-guard хамства (`Хулиганство / Bezorilik` в `CATEGORIES`) | `rudeness` |
+| Keyword-guard хамства (word-boundary для коротких слов; не срабатывает на «банкомат») | `rudeness` |
 
 Ответ: «Передаём оператору...» + `escalation_summary` для оператора.
 
@@ -82,7 +82,7 @@ flowchart TD
 
 | Поле | Назначение |
 |------|------------|
-| `scenario_id` | Активный сценарий (фиксируется при первом матче) |
+| `scenario_id` | Активный сценарий; сменяется при уверенном новом матче (unlock) |
 | `slots` | Ответы на уточняющие вопросы (`user_type`, `payment_channel`) |
 | `clarification_count` | Сколько раз пользователь отвечал на уточнение |
 | `tools_used` | Инструменты за текущий диалог |
@@ -111,7 +111,7 @@ flowchart TD
 
 Эмбеддинг сообщения **переиспользуется** из `/process_message` (тот же вектор, что и для RAG). Индекс сценариев строится при старте и после save в `/admin/scenarios` из `description_ru` + `description_uz` + triggers + search_hint.
 
-После матча `scenario_id` **закрепляется** в сессии до её сброса (эскалация / таймаут 1 ч).
+После матча `scenario_id` держится в сессии, но **переключается**, если router уверенно находит другой сценарий (слоты сбрасываются). Слоты парсятся с **первого** сообщения (`extract_slot_value`); сырой текст в слот не пишется. Сброс сессии: эскалация / таймаут 1 ч (включая `count`/`embedding`).
 
 ### Поля сценария
 
@@ -390,6 +390,7 @@ flowchart TD
 | `SCENARIOS_DIR` | `scenarios` | Каталог сценариев |
 | `SCENARIO_ROUTER_MODE` | `hybrid` | `hybrid` \| `embedding` \| `substring` |
 | `SCENARIO_ROUTER_THRESHOLD` | `0.55` | Мин. cosine для embedding-матча |
+| `MIN_RRF_SCORE` | `0.025` | Мин. RRF для `is_sufficient` (слабый hit ≠ ответ) |
 
 ### scenarios.json (без перезапуска — hot reload по mtime)
 

@@ -58,6 +58,8 @@ class Settings:
     # Scenario router: substring | embedding | hybrid (embedding + substring fallback)
     SCENARIO_ROUTER_MODE: str = os.getenv("SCENARIO_ROUTER_MODE", "hybrid")
     SCENARIO_ROUTER_THRESHOLD: float = float(os.getenv("SCENARIO_ROUTER_THRESHOLD", "0.55"))
+    # Hybrid RRF: rank-0 only ≈ 1/61 ≈ 0.016; default выше, чтобы слабый hit не был «sufficient»
+    MIN_RRF_SCORE: float = float(os.getenv("MIN_RRF_SCORE", "0.025"))
     ESCALATION_SUMMARY_MAX_CHARS: int = int(os.getenv("ESCALATION_SUMMARY_MAX_CHARS", "1500"))
     ESCALATION_SUMMARY_MODEL: str = os.getenv("ESCALATION_SUMMARY_MODEL", "gpt-4o-mini")
 

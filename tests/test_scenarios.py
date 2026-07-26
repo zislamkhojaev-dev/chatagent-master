@@ -9,6 +9,7 @@ from app.services import scenarios as scenarios_module
 from app.services.scenarios import (
     Scenario,
     build_search_query,
+    extract_slot_value,
     get_missing_slots,
     load_scenarios,
     match_scenario,
@@ -80,3 +81,14 @@ def test_validate_scenarios_duplicate_ids():
                 {"id": "a", "triggers": ["y"], "required_slots": []},
             ]
         })
+
+
+def test_extract_slot_value_user_type():
+    assert extract_slot_value("user_type", "Я агент, QR не работает") == "агент"
+    assert extract_slot_value("user_type", "я клиент приложения") == "клиент"
+    assert extract_slot_value("user_type", "не знаю что делать") is None
+
+
+def test_extract_slot_value_payment_channel():
+    assert extract_slot_value("payment_channel", "в инфокиоске") == "инфокиоск"
+    assert extract_slot_value("payment_channel", "через приложение") == "мобильное приложение"

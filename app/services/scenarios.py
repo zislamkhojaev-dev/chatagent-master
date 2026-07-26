@@ -144,6 +144,49 @@ def get_slot_question(slot: ScenarioSlot, language: str) -> str:
     return slot.question_uz if language == "uz" else slot.question_ru
 
 
+# Канонические значения слотов → алиасы (substring, lower)
+_SLOT_ALIASES: Dict[str, Dict[str, List[str]]] = {
+    "user_type": {
+        "клиент": [
+            "клиент", "mijoz", "пользователь", "foydalanuvchi",
+            "в приложении", "ilovada", "mobile app", "paynet app",
+        ],
+        "агент": ["агент", "agent", "cashout", "агентск"],
+    },
+    "payment_channel": {
+        "мобильное приложение": [
+            "приложение", "ilova", "мобильн", "mobil", "mobile app", "paynet app",
+        ],
+        "агент": ["агент", "agent", "cashout"],
+        "инфокиоск": [
+            "инфокиоск", "infokiosk", "киоск", "kiosk", "терминал", "terminal",
+        ],
+    },
+}
+
+
+def extract_slot_value(slot_id: str, message: str) -> Optional[str]:
+    """
+    Извлекает каноническое значение слота из текста.
+    Неизвестный slot_id: принимает только короткий ответ (не новый вопрос).
+    """
+    if not message or not message.strip():
+        return None
+    text = message.strip()
+    text_lower = text.lower()
+    aliases = _SLOT_ALIASES.get(slot_id)
+    if aliases:
+        for canonical, words in aliases.items():
+            for word in words:
+                if word.lower() in text_lower:
+                    return canonical
+        return None
+    # generic slot: reject long / question-like turns
+    if len(text) > 80 or "?" in text or "？" in text:
+        return None
+    return text
+
+
 def build_search_query(scenario: Optional[Scenario], slots: dict, fallback_query: str) -> str:
     if not scenario or not scenario.search_hint:
         return fallback_query

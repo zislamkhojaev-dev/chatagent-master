@@ -9,6 +9,8 @@ def build_system_prompt(
     scenario: Optional[Scenario],
     agent_state: dict,
     chat_context: Optional[str] = None,
+    *,
+    kb_answer_mode: bool = False,
 ) -> str:
     lang_block = (
         "MUHIM: FAQAT O'ZBEK TILIDA VA FAQAT LOTIN YOZUVIDA javob bering!"
@@ -16,7 +18,8 @@ def build_system_prompt(
         else "Отвечай на русском языке, используя кириллицу."
     )
     clarify_block = ""
-    if scenario:
+    # Не противоречить retrieval-first: при ответе по уже найденной KB не требуем уточнение
+    if scenario and not kb_answer_mode:
         missing = get_missing_slots(scenario, agent_state)
         if missing:
             q = get_slot_question(missing[0], language)
@@ -24,16 +27,18 @@ def build_system_prompt(
                 f"\nАКТИВНЫЙ СЦЕНАРИЙ: {scenario.id}\n"
                 f"ОБЯЗАТЕЛЬНО задай уточняющий вопрос (не вызывай search_knowledge_base): {q}\n"
             )
+    elif scenario and kb_answer_mode:
+        clarify_block = f"\nАКТИВНЫЙ СЦЕНАРИЙ: {scenario.id}\n"
+        if agent_state.get("slots"):
+            clarify_block += f"Известные факты: {agent_state['slots']}\n"
 
     context_block = f"\nКонтекст диалога: {chat_context}\n" if chat_context else ""
     slots_block = ""
-    if agent_state.get("slots"):
+    if agent_state.get("slots") and not kb_answer_mode:
         slots_block = f"\nИзвестные факты: {agent_state['slots']}\n"
 
     if language == "uz":
-        return (
-            "Siz Paynet qo'llab-quvvatlash agentisiz.\n"
-            f"{lang_block}\n"
+        rules = (
             "QOIDALAR:\n"
             "1. Avval foydalanuvchi muammosini aniqlang\n"
             "2. Agar required_slots to'ldirilmagan bo'lsa — aniqlashtiruvchi savol bering, RAG chaqirmang\n"
@@ -42,11 +47,22 @@ def build_system_prompt(
             "5. FAQAT KB ma'lumotlaridan foydalaning, o'ylab topmang\n"
             "6. KB da javob yo'q bo'lsa — escalate_to_operator chaqiring, erkin javob yozmang\n"
             "7. Muloyim va aniq bo'ling\n"
+        )
+        if kb_answer_mode:
+            rules = (
+                "QOIDALAR:\n"
+                "1. Javobni FAQAT berilgan KB natijalariga asoslang, o'ylab topmang\n"
+                "2. Aniqlashtiruvchi savol bermang — kontekst allaqachon topilgan\n"
+                "3. Muloyim va aniq bo'ling\n"
+            )
+        return (
+            "Siz Paynet qo'llab-quvvatlash agentisiz.\n"
+            f"{lang_block}\n"
+            f"{rules}"
             f"{clarify_block}{context_block}{slots_block}"
         )
-    return (
-        "Ты — агент службы поддержки Paynet.\n"
-        f"{lang_block}\n"
+
+    rules = (
         "ПРАВИЛА:\n"
         "1. Сначала пойми проблему пользователя\n"
         "2. Если required_slots не заполнены — задай уточняющий вопрос, НЕ вызывай search_knowledge_base\n"
@@ -55,6 +71,18 @@ def build_system_prompt(
         "5. Используй ТОЛЬКО информацию из KB, не выдумывай\n"
         "6. Если в KB нет ответа — вызови escalate_to_operator, НЕ пиши свободный ответ пользователю\n"
         "7. Будь вежливым и конкретным\n"
+    )
+    if kb_answer_mode:
+        rules = (
+            "ПРАВИЛА:\n"
+            "1. Отвечай ТОЛЬКО по результатам поиска в базе знаний ниже, не выдумывай\n"
+            "2. Не задавай уточняющих вопросов — релевантный контекст уже найден\n"
+            "3. Будь вежливым и конкретным\n"
+        )
+    return (
+        "Ты — агент службы поддержки Paynet.\n"
+        f"{lang_block}\n"
+        f"{rules}"
         f"{clarify_block}{context_block}{slots_block}"
     )
 

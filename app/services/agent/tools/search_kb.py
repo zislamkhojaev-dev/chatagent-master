@@ -1,6 +1,6 @@
 """Tool: search knowledge base via hybrid RAG with metadata filters."""
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from app.services.embeddings import get_embedding
 from app.services.kb_metadata import MetadataFilter, build_metadata_filter
@@ -19,6 +19,8 @@ async def execute_search_kb(
     scenario: Optional[Scenario] = None,
     slots: Optional[dict] = None,
     metadata_filter: Optional[MetadataFilter] = None,
+    query_embedding: Optional[List[float]] = None,
+    original_message: Optional[str] = None,
 ) -> dict:
     kb_chunks = getattr(app_state, "knowledge_base", None) or []
     qdrant_client = getattr(app_state, "qdrant_client", None)
@@ -32,7 +34,14 @@ async def execute_search_kb(
     if scenario:
         search_query = build_search_query(scenario, slots or {}, query)
 
-    embedding = await get_embedding(search_query, redis_client)
+    # Reuse process.py embedding when search text == original user message
+    reuse_src = (original_message or query or "").strip()
+    if query_embedding is not None and search_query.strip() == reuse_src:
+        embedding = query_embedding
+        logger.debug("Reusing query_embedding for search_query=%s", search_query[:50])
+    else:
+        embedding = await get_embedding(search_query, redis_client)
+
     result = await hybrid_search(
         search_query,
         embedding,

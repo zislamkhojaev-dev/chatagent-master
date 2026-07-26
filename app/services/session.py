@@ -62,7 +62,7 @@ async def update_session_and_get_history(
     redis_client: Redis,
     chat_id: str,
     anonymized_message: str,
-) -> tuple[List[str], str, str, str, bool, List[dict]]:
+) -> tuple:
     """
     Обновляет сессию в Redis.
     Возвращает (user_history, last_embedding_str, count_str, escalation_count_str, seen_is_new, messages).
@@ -149,6 +149,9 @@ async def cleanup_inactive_sessions(redis_client: Redis) -> None:
                         f"chat:{chat_id}:last_language",
                         f"chat:{chat_id}:context",
                         f"chat:{chat_id}:context_updated_at",
+                        f"chat:{chat_id}:count",
+                        f"chat:{chat_id}:embedding",
+                        f"chat:{chat_id}:seen",
                         _messages_key(chat_id),
                         _agent_state_key(chat_id),
                         f"chat:{chat_id}:escalation_summary",
@@ -164,12 +167,17 @@ async def cleanup_inactive_sessions(redis_client: Redis) -> None:
 
 
 def get_escalation_keys_to_delete(chat_id: str) -> List[str]:
-    """Ключи Redis для удаления при эскалации."""
+    """Ключи Redis для удаления при эскалации (в т.ч. repeat-счётчик)."""
     return [
         f"chat:{chat_id}:start_time",
         f"chat:{chat_id}:active",
         f"chat:{chat_id}:escalation_count",
+        f"chat:{chat_id}:count",
+        f"chat:{chat_id}:embedding",
+        f"chat:{chat_id}:seen",
         _messages_key(chat_id),
         _agent_state_key(chat_id),
         f"chat:{chat_id}:context",
+        f"chat:{chat_id}:context_updated_at",
+        f"chat:{chat_id}:escalation_summary",
     ]

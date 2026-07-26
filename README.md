@@ -33,7 +33,7 @@
 - Сценарии из `scenarios/scenarios.json`: уточнения, фильтры KB, hot-reload; редактор `/admin/scenarios`.
 - Hybrid scenario router (`SCENARIO_ROUTER_MODE=hybrid|embedding|substring`).
 - RAG: Qdrant + BM25 + metadata filters по сценарию/слотам.
-- Параметр `**language**` в API: `"uz"`  `"ru"` без детекции.
+- Параметр **`language`** в API: передавайте `"uz"` или `"ru"` с клиента — без вызова детекции языка (~экономия 1–3 с).
 - Эскалация: hard guards + tool `escalate`; ручная `POST /escalate`.
 - Мониторинг: Prometheus (8001), `/health`, `/stats`.
 - Управление БЗ: `/admin/kb` (PDF → индексация), Basic Auth.

@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional
 
 from app.services.constants import CATEGORIES
 
 logger = logging.getLogger(__name__)
+
+# Короткие токены — только по границам слова (иначе «банкомат» → rudeness)
+_SHORT_KW_MAX_LEN = 4
 
 
 def rudeness_keywords() -> List[str]:
@@ -22,12 +26,21 @@ def rudeness_keywords() -> List[str]:
 
 
 def is_rudeness_message(query: str, language: str = "ru") -> bool:
-    """Дешёвый keyword-guard: мат / хулиганство / bezorilik (без OpenAI)."""
-    del language  # reserved for future locale-specific lists
+    """Дешёвый keyword-guard без OpenAI; короткие слова — word-boundary."""
+    del language
     if not query or not query.strip():
         return False
     query_lower = query.lower()
-    return any(kw.lower() in query_lower for kw in rudeness_keywords())
+    for kw in rudeness_keywords():
+        kw_l = kw.lower().strip()
+        if not kw_l:
+            continue
+        if len(kw_l) <= _SHORT_KW_MAX_LEN:
+            if re.search(rf"(?<!\w){re.escape(kw_l)}(?!\w)", query_lower):
+                return True
+        elif kw_l in query_lower:
+            return True
+    return False
 
 
 def build_stub_classification(
