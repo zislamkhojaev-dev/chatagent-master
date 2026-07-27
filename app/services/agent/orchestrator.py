@@ -209,6 +209,15 @@ async def _retrieval_first_probe(
     return result_all, "insufficient"
 
 
+# Слоты, без которых фильтр поиска остаётся на default_audience/channel
+_DISAMBIGUATION_SLOT_IDS = frozenset({"user_type", "payment_channel"})
+
+
+def _has_missing_disambiguation_slots(scenario: Scenario, agent_state: dict) -> bool:
+    missing_ids = {s.id for s in get_missing_slots(scenario, agent_state)}
+    return bool(missing_ids & _DISAMBIGUATION_SLOT_IDS)
+
+
 def _should_clarify(
     scenario: Optional[Scenario],
     agent_state: dict,
@@ -223,8 +232,14 @@ def _should_clarify(
         return False
     if policy == "always":
         return True
-    # if_ambiguous: уточнять при ambiguous / insufficient (не при уже достаточном probe)
-    return probe_status in ("ambiguous", "insufficient")
+    # if_ambiguous: уточнять при пустой/неоднозначной KB
+    if probe_status in ("ambiguous", "insufficient"):
+        return True
+    # Probe «sufficient» на default_audience/channel без слота — ещё не разобрали
+    # клиента vs агента / канал. Иначе после разметки БЗ под client уточнения пропадают.
+    if probe_status == "sufficient" and _has_missing_disambiguation_slots(scenario, agent_state):
+        return True
+    return False
 
 
 @retry(

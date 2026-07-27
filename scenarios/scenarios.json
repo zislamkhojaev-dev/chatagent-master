@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "updated_at": "17.07.2026 16:50",
+  "updated_at": "27.07.2026 17:30",
   "scenarios": [
     {
       "id": "qr_issue",
       "enabled": true,
-      "triggers": ["qr", "qr kod", "qr-kod", "qr-код", "сканирование", "skanerlash"],
+      "triggers": ["qr", "qr kod", "qr-kod", "qr-код", "сканирование", "skanerlash", "не сканиру", "skanerlan"],
       "description_ru": "Проблемы с QR-кодом: не сканируется, ошибка сканирования оплаты, QR у клиента или агента",
       "description_uz": "QR-kod muammolari: skanerlanmayapti, to'lov QR xatosi, mijoz yoki agent QR",
       "clarify_policy": "if_ambiguous",
@@ -24,7 +24,7 @@
     {
       "id": "payment_failed",
       "enabled": true,
-      "triggers": ["платеж не прошел", "to'lov o'tmadi", "оплата не прошла", "to'lov amalga oshmadi", "ошибка оплаты", "to'lov xatosi"],
+      "triggers": ["платеж не прошел", "платеж не прошёл", "to'lov o'tmadi", "оплата не прошла", "to'lov amalga oshmadi", "ошибка оплаты", "to'lov xatosi", "деньги не дошли", "pul o'tmadi"],
       "description_ru": "Платёж или оплата не прошла, ошибка транзакции в приложении, у агента или в инфокиоске",
       "description_uz": "To'lov o'tmadi, tranzaksiya xatosi: mobil ilova, agent yoki infokiosk",
       "clarify_policy": "if_ambiguous",
@@ -43,7 +43,7 @@
     {
       "id": "refund",
       "enabled": true,
-      "triggers": ["возврат", "qaytarish", "отмена платежа", "to'lovni bekor", "ошибочный платеж", "xato to'lov"],
+      "triggers": ["возврат", "qaytarish", "отмена платежа", "отменить платеж", "отменить оплату", "отмена", "отменить", "to'lovni bekor", "ошибочный платеж", "xato to'lov", "вернуть деньги", "pulni qaytar"],
       "description_ru": "Возврат средств, отмена ошибочного платежа, как вернуть деньги",
       "description_uz": "Pulni qaytarish, xato to'lovni bekor qilish, qaytarish shartlari",
       "clarify_policy": "if_ambiguous",

@@ -152,6 +152,8 @@ async def resolve_scenario(
         except Exception as e:
             logger.warning("Scenario router: ensure embeddings failed: %s", e)
 
+    near_miss: Optional[Tuple[str, float]] = None
+
     if emb is not None and _scenario_embeddings:
         ranked = rank_scenarios_by_embedding(emb)
         if ranked:
@@ -165,14 +167,28 @@ async def resolve_scenario(
             )
             if best_score >= threshold and best_id in by_id:
                 return by_id[best_id]
+            near_miss = (best_id, best_score)
             if mode == "embedding":
                 return None
 
-    # hybrid / no embedding available → substring fallback
+    # hybrid: embedding ниже порога → substring; если и substring пуст —
+    # soft near-miss (часто «отменить платеж» ≈ refund чуть ниже threshold)
     if mode == "hybrid" or emb is None or not _scenario_embeddings:
         fallback = match_scenario_substring(query, language)
         if fallback:
             logger.info("Scenario router fallback substring: %s", fallback.id)
-        return fallback
+            return fallback
+        if mode == "hybrid" and near_miss is not None:
+            soft = max(0.0, threshold - 0.06)
+            near_id, near_score = near_miss
+            if near_score >= soft and near_id in by_id:
+                logger.info(
+                    "Scenario router soft embedding: best=%s score=%.3f soft=%.3f",
+                    near_id,
+                    near_score,
+                    soft,
+                )
+                return by_id[near_id]
+        return None
 
     return None

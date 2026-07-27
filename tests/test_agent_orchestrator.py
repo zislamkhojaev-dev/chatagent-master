@@ -1,5 +1,7 @@
-"""Tests for escalation summary helpers (no Redis required)."""
+"""Tests for agent orchestrator helpers."""
 from app.services.agent.kb_guard import probe_has_relevant_context
+from app.services.agent.orchestrator import _should_clarify
+from app.services.scenarios import Scenario, ScenarioSlot
 
 
 def _fallback_summary(messages, agent_state, classification, reason):
@@ -49,3 +51,42 @@ def test_enrich_classification_logic():
     enriched["tools_used"] = ", ".join(["escalate_to_operator"])
     assert enriched["escalation_summary"] == "summary text"
     assert enriched["tools_used"] == "escalate_to_operator"
+
+
+def _qr_scenario(**kwargs) -> Scenario:
+    data = {
+        "id": "qr_issue",
+        "triggers": ["qr"],
+        "clarify_policy": "if_ambiguous",
+        "required_slots": [
+            ScenarioSlot(
+                id="user_type",
+                question_ru="Клиент или агент?",
+                question_uz="Mijoz yoki agent?",
+            )
+        ],
+    }
+    data.update(kwargs)
+    return Scenario(**data)
+
+
+def test_should_clarify_if_ambiguous_on_insufficient():
+    scenario = _qr_scenario()
+    assert _should_clarify(scenario, {"slots": {}}, "insufficient") is True
+    assert _should_clarify(scenario, {"slots": {}}, "ambiguous") is True
+
+
+def test_should_clarify_if_ambiguous_asks_when_disambiguation_slot_missing():
+    """Sufficient probe on default client must still ask user_type."""
+    scenario = _qr_scenario()
+    assert _should_clarify(scenario, {"slots": {}}, "sufficient") is True
+
+
+def test_should_clarify_skips_when_slot_filled():
+    scenario = _qr_scenario()
+    assert _should_clarify(scenario, {"slots": {"user_type": "клиент"}}, "sufficient") is False
+
+
+def test_should_clarify_never_policy():
+    scenario = _qr_scenario(clarify_policy="never")
+    assert _should_clarify(scenario, {"slots": {}}, "insufficient") is False
